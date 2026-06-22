@@ -1,0 +1,8 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+prices.db
+uploads/
+.pytest_cache/
