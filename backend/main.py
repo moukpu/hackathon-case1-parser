@@ -4,7 +4,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
+import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from db import get_db, ServicePrice, engine, Base
 from extractor import extract_text
