@@ -22,6 +22,35 @@ function reviewMatchesReason(item, reason) {
   return true;
 }
 
+function clearReviewSelection(message = 'Позиция не выбрана.') {
+  selectedReviewItemId = null;
+  const selected = document.getElementById('reviewSelected');
+  if (selected) selected.innerHTML = message;
+  const candidates = document.getElementById('reviewCandidates');
+  if (candidates) candidates.innerHTML = '<b>Кандидаты появятся после выбора строки</b><div class="hint">Система предложит топ-5 услуг из справочника.</div>';
+  const search = document.getElementById('reviewServiceSearch');
+  if (search) search.value = '';
+  const select = document.getElementById('reviewServiceSelect');
+  if (select) select.innerHTML = '';
+}
+
+async function applyReviewService(serviceId) {
+  if (!selectedReviewItemId) return alert('Сначала выбери строку ревью');
+  if (!serviceId) return alert('Выбери услугу');
+  try {
+    await api('/api/match', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_id: selectedReviewItemId, service_id: serviceId }),
+    });
+    clearReviewSelection('<span class="badge ok">готово</span><div class="hint" style="margin-top:8px">Match применён. Строка ушла из ревью.</div>');
+    if (typeof loadUnmatched === 'function') await loadUnmatched();
+    if (typeof refreshStats === 'function') refreshStats();
+  } catch (e) {
+    alert(e.message || e);
+  }
+}
+
 function ensureReviewCandidateBox() {
   const selected = document.getElementById('reviewSelected');
   if (!selected || document.getElementById('reviewCandidates')) return;
@@ -42,6 +71,7 @@ function renderReviewFilterButtons() {
   document.querySelectorAll('[data-review-reason]').forEach(btn => btn.addEventListener('click', () => {
     document.querySelectorAll('[data-review-reason]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    clearReviewSelection();
     if (typeof renderReviewList === 'function') renderReviewList();
   }));
 }
@@ -67,15 +97,7 @@ async function loadReviewCandidates(itemId) {
         <button class="btn btn-primary" type="button" data-apply-candidate="${reviewUiEsc(c.service_id)}">Применить</button>
       </div>
     `).join('')}</div>`;
-    box.querySelectorAll('[data-apply-candidate]').forEach(btn => btn.addEventListener('click', async () => {
-      if (!selectedReviewItemId) return alert('Сначала выбери строку ревью');
-      try {
-        await api('/api/match', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ item_id:selectedReviewItemId, service_id:btn.dataset.applyCandidate }) });
-        selectedReviewItemId = null;
-        if (typeof loadUnmatched === 'function') await loadUnmatched();
-        if (typeof refreshStats === 'function') refreshStats();
-      } catch (e) { alert(e.message || e); }
-    }));
+    box.querySelectorAll('[data-apply-candidate]').forEach(btn => btn.addEventListener('click', () => applyReviewService(btn.dataset.applyCandidate)));
   } catch (e) {
     box.innerHTML = `<span class="badge bad">ошибка</span><div class="hint" style="margin-top:8px">${reviewUiEsc(e.message || e)}</div>`;
   }
@@ -93,6 +115,9 @@ function patchReviewUi() {
     if (box) box.innerHTML = '<div class="hint">Загрузка ревью...</div>';
     try {
       lastReviewItems = await api('/api/review/items');
+      if (selectedReviewItemId && !(lastReviewItems || []).some(i => i.item_id === selectedReviewItemId)) {
+        clearReviewSelection();
+      }
       renderReviewList();
     } catch (_) {
       return originalLoadUnmatched();
@@ -105,6 +130,9 @@ function patchReviewUi() {
     const q = document.getElementById('reviewClinicFilter')?.value || '';
     const reason = activeReviewReason();
     const rows = (lastReviewItems || []).filter(i => reviewMatchesReason(i, reason) && ciMatch(q, i.clinic_name, i.original_name, i.standardized_name, i.note, i.review_reason_label));
+    if (selectedReviewItemId && !rows.some(i => i.item_id === selectedReviewItemId)) {
+      clearReviewSelection();
+    }
     const target = document.getElementById('reviewResult');
     if (!target) return;
     target.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Клиника</th><th>Исходная строка</th><th>Цена</th><th>Match</th><th>Причина</th></tr></thead><tbody>${rows.map(i => `<tr class="review-row ${i.item_id===selectedReviewItemId?'selected':''}" data-item-id="${reviewUiEsc(i.item_id)}"><td>${reviewUiEsc(i.clinic_name)}</td><td>${reviewUiEsc(i.original_name)}</td><td>${money(i.price_resident_kzt)}</td><td>${i.confidence ?? 0}%</td><td>${reviewUiEsc(reviewReasonLabel(i))}</td></tr>`).join('')}</tbody></table></div>`;
@@ -122,6 +150,13 @@ function patchReviewUi() {
     loadReviewCandidates(id);
     if (originalSearchReviewServices) originalSearchReviewServices();
   };
+
+  if (typeof applyReviewMatch === 'function') {
+    applyReviewMatch = async function() {
+      const serviceId = document.getElementById('reviewServiceSelect')?.value;
+      await applyReviewService(serviceId);
+    };
+  }
 
   window.__reviewImprovementsReady = true;
 }
