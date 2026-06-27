@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ai_processor import parse_price_list_with_ai
+from auth import AuthUser, require_user
 from db import (
     Base,
     Partner,
@@ -37,7 +38,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="MedArchive Price Parser API",
     description="MVP: parsing partner clinic price archives, service catalog matching, verification queue and search.",
-    version="0.5.0",
+    version="0.6.0",
 )
 
 app.add_middleware(
@@ -87,46 +88,51 @@ def safe_filename(value: str) -> str:
 
 def catalog_storage_dir() -> Path:
     if VOLUME_DIR.exists() and VOLUME_DIR.is_dir():
-        VOLUME_DIR.mkdir(parents=True, exist_ok=True)
-        return VOLUME_DIR
-    fallback = ROOT_DIR / "data"
-    fallback.mkdir(parents=True, exist_ok=True)
-    return fallback
+        target = VOLUME_DIR / "catalogs"
+    else:
+        target = ROOT_DIR / "data"
+    target.mkdir(parents=True, exist_ok=True)
+    return target
 
 
-def user_catalog_candidates() -> list[Path]:
+def user_catalog_candidates(user_id: str | None = None) -> list[Path]:
     base = catalog_storage_dir()
-    return [base / f"services_catalog_user{ext}" for ext in CATALOG_EXTENSIONS]
+    prefix = f"services_catalog_user_{safe_filename(user_id)}" if user_id else "services_catalog_user"
+    return [base / f"{prefix}{ext}" for ext in CATALOG_EXTENSIONS]
 
 
-def preferred_catalog_path() -> Path:
+def preferred_catalog_path(user_id: str | None = None) -> Path:
     env_path = os.getenv("CATALOG_PATH")
     if env_path and Path(env_path).exists():
         return Path(env_path)
-    for candidate in user_catalog_candidates():
+    for candidate in user_catalog_candidates(user_id):
         if candidate.exists():
             return candidate
     return BUNDLED_CATALOG_PATH
 
 
-def persist_user_catalog(file_name: str, contents: bytes) -> Path:
+def persist_user_catalog(user_id: str, file_name: str, contents: bytes) -> Path:
     suffix = Path(file_name or "").suffix.lower()
     if suffix not in CATALOG_EXTENSIONS:
         suffix = ".csv"
     storage = catalog_storage_dir()
-    for old in storage.glob("services_catalog_user.*"):
+    prefix = f"services_catalog_user_{safe_filename(user_id)}"
+    for old in storage.glob(f"{prefix}.*"):
         try:
             old.unlink()
         except OSError:
             pass
-    target = storage / f"services_catalog_user{suffix}"
+    target = storage / f"{prefix}{suffix}"
     target.write_bytes(contents)
     return target
 
 
-def active_jobs() -> list[dict]:
+def active_jobs(user_id: str | None = None) -> list[dict]:
     with JOBS_LOCK:
-        return [job for job in JOBS.values() if job.get("status") in ACTIVE_JOB_STATUSES]
+        jobs = [job for job in JOBS.values() if job.get("status") in ACTIVE_JOB_STATUSES]
+    if user_id is not None:
+        jobs = [job for job in jobs if job.get("user_id") == user_id]
+    return jobs
 
 
 def infer_partner_name(upload_filename: str, inner_filename: str, fallback: str) -> str:
@@ -227,18 +233,22 @@ def item_to_response(item: PriceItem) -> dict:
     }
 
 
-def bootstrap_catalog_if_needed(force: bool = False) -> dict:
+def bootstrap_catalog_in_db(db: Session, user_id: str, force: bool = False) -> dict:
+    current_count = db.query(Service).filter(Service.user_id == user_id).count()
+    if current_count and not force:
+        return {"message": "Справочник уже загружен", "services": current_count, "skipped_bootstrap": True}
+    catalog_path = preferred_catalog_path(user_id)
+    if not catalog_path.exists():
+        return {"message": "Справочник не найден", "services": current_count, "skipped_bootstrap": True}
+    result = import_service_catalog(db, catalog_path.name, catalog_path.read_bytes(), user_id=user_id)
+    return {"message": "Справочник загружен", **result, "services": db.query(Service).filter(Service.user_id == user_id).count(), "catalog_source": str(catalog_path)}
+
+
+def bootstrap_catalog_if_needed(user_id: str, force: bool = False) -> dict:
     db = SessionLocal()
     try:
-        current_count = db.query(Service).count()
-        if current_count and not force:
-            return {"message": "Справочник уже загружен", "services": current_count, "skipped_bootstrap": True}
-        catalog_path = preferred_catalog_path()
-        if not catalog_path.exists():
-            return {"message": "Справочник не найден", "services": current_count, "skipped_bootstrap": True}
         with DB_WRITE_LOCK:
-            result = import_service_catalog(db, catalog_path.name, catalog_path.read_bytes())
-        return {"message": "Справочник загружен", **result, "services": db.query(Service).count(), "catalog_source": str(catalog_path)}
+            return bootstrap_catalog_in_db(db, user_id, force=force)
     except Exception as exc:
         db.rollback()
         return {"message": "Ошибка загрузки справочника", "error": str(exc)}
@@ -270,9 +280,10 @@ def set_job_file(job_id: str, index: int, **kwargs) -> None:
             job["status"] = "processing"
 
 
-def store_error_document(db: Session, partner_name: str, inner_filename: str, contents: bytes, parsed_effective_date: date, error: str) -> None:
-    partner = get_or_create_partner(db, partner_name)
+def store_error_document(db: Session, user_id: str, partner_name: str, inner_filename: str, contents: bytes, parsed_effective_date: date, error: str) -> None:
+    partner = get_or_create_partner(db, partner_name, user_id=user_id)
     doc = PriceDocument(
+        user_id=user_id,
         partner_id=partner.partner_id,
         file_name=inner_filename,
         file_format=detect_file_format(inner_filename, contents),
@@ -293,6 +304,7 @@ def process_file_payload(job_id: str, payload: dict, parsed_effective_date: date
     inner_filename = payload["inner_filename"]
     contents = payload["contents"]
     partner_name = payload["partner_name"]
+    user_id = payload["user_id"]
 
     set_job_file(job_id, index, status="processing", error=None)
     try:
@@ -302,7 +314,7 @@ def process_file_payload(job_id: str, payload: dict, parsed_effective_date: date
             db = SessionLocal()
             try:
                 with DB_WRITE_LOCK:
-                    store_error_document(db, partner_name, inner_filename, contents, parsed_effective_date, error)
+                    store_error_document(db, user_id, partner_name, inner_filename, contents, parsed_effective_date, error)
             finally:
                 db.close()
             set_job_file(job_id, index, status="error", error=error, items=0, review_items=0)
@@ -314,7 +326,7 @@ def process_file_payload(job_id: str, payload: dict, parsed_effective_date: date
             db = SessionLocal()
             try:
                 with DB_WRITE_LOCK:
-                    store_error_document(db, partner_name, inner_filename, contents, parsed_effective_date, error)
+                    store_error_document(db, user_id, partner_name, inner_filename, contents, parsed_effective_date, error)
             finally:
                 db.close()
             set_job_file(job_id, index, status="error", error=error, items=0, review_items=0)
@@ -323,11 +335,12 @@ def process_file_payload(job_id: str, payload: dict, parsed_effective_date: date
         db = SessionLocal()
         try:
             with DB_WRITE_LOCK:
-                if db.query(Service).count() == 0:
-                    bootstrap_catalog_if_needed(force=False)
+                if db.query(Service).filter(Service.user_id == user_id).count() == 0:
+                    bootstrap_catalog_in_db(db, user_id, force=False)
 
-                partner = get_or_create_partner(db, partner_name)
+                partner = get_or_create_partner(db, partner_name, user_id=user_id)
                 doc = PriceDocument(
+                    user_id=user_id,
                     partner_id=partner.partner_id,
                     file_name=inner_filename,
                     file_format=detect_file_format(inner_filename, contents),
@@ -370,7 +383,7 @@ def process_file_payload(job_id: str, payload: dict, parsed_effective_date: date
                         price_main = price_resident
 
                     currency = (raw_item.get("currency") or raw_item.get("currency_original") or "KZT").upper()
-                    matched = match_service(db, normalized_name or raw_name, category_hint, service_code)
+                    matched = match_service(db, normalized_name or raw_name, category_hint, service_code, user_id=user_id)
 
                     confidence = matched.confidence
                     if ai_confidence:
@@ -389,6 +402,7 @@ def process_file_payload(job_id: str, payload: dict, parsed_effective_date: date
                         validation_notes.append("Дата прайса в будущем")
 
                     item = PriceItem(
+                        user_id=user_id,
                         doc_id=doc.doc_id,
                         partner_id=partner.partner_id,
                         service_id=matched.service.service_id if matched.service else None,
@@ -446,8 +460,9 @@ def process_upload_job(job_id: str, file_payloads: list[dict], effective_date_te
 
 
 @app.on_event("startup")
-def startup_bootstrap_catalog():
-    bootstrap_catalog_if_needed(force=False)
+def startup_noop():
+    # Catalog is now account-scoped and is bootstrapped on registration/upload.
+    return None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -465,10 +480,10 @@ async def health(db: Session = Depends(get_db)):
 
 
 @app.get("/api/jobs/{job_id}")
-async def get_job(job_id: str):
+async def get_job(job_id: str, current_user: AuthUser = Depends(require_user)):
     with JOBS_LOCK:
         job = JOBS.get(job_id)
-        if not job:
+        if not job or job.get("user_id") != current_user.user_id:
             raise HTTPException(status_code=404, detail="Job не найден. Возможно, сервер перезапустился.")
         return job
 
@@ -479,6 +494,7 @@ async def upload_file_async(
     files: List[UploadFile] = File(...),
     clinic_name: str = Form("Анонимный тест"),
     effective_date: Optional[str] = Form(None),
+    current_user: AuthUser = Depends(require_user),
 ):
     groq_api_key = os.getenv("GROQ_API_KEY")
     if not groq_api_key:
@@ -506,6 +522,7 @@ async def upload_file_async(
                 "inner_filename": inner_filename,
                 "partner_name": partner_name,
                 "contents": contents,
+                "user_id": current_user.user_id,
             })
             documents.append({
                 "index": index,
@@ -525,6 +542,7 @@ async def upload_file_async(
     with JOBS_LOCK:
         JOBS[job_id] = {
             "job_id": job_id,
+            "user_id": current_user.user_id,
             "status": "queued",
             "created_at": datetime.utcnow().isoformat(),
             "started_at": None,
@@ -544,25 +562,25 @@ async def upload_file_async(
 
 
 @app.post("/api/catalog/bootstrap")
-async def bootstrap_catalog(force: bool = False):
-    if active_jobs():
+async def bootstrap_catalog(force: bool = False, current_user: AuthUser = Depends(require_user)):
+    if active_jobs(current_user.user_id):
         raise HTTPException(status_code=409, detail="Дождись завершения обработки файлов, потом обновляй справочник.")
-    result = bootstrap_catalog_if_needed(force=force)
+    result = bootstrap_catalog_if_needed(current_user.user_id, force=force)
     if result.get("error"):
         raise HTTPException(status_code=500, detail=result)
     return result
 
 
 @app.post("/api/catalog/upload")
-async def upload_catalog(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    if active_jobs():
+async def upload_catalog(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
+    if active_jobs(current_user.user_id):
         raise HTTPException(status_code=409, detail="Дождись завершения обработки файлов, потом импортируй справочник.")
     contents = await file.read()
     try:
         with DB_WRITE_LOCK:
-            result = import_service_catalog(db, file.filename, contents)
-            saved_path = persist_user_catalog(file.filename, contents)
-            services_count = db.query(Service).count()
+            result = import_service_catalog(db, file.filename, contents, user_id=current_user.user_id)
+            saved_path = persist_user_catalog(current_user.user_id, file.filename, contents)
+            services_count = db.query(Service).filter(Service.user_id == current_user.user_id).count()
         return {"message": "Справочник услуг загружен", **result, "services": services_count, "catalog_source": str(saved_path)}
     except Exception as exc:
         db.rollback()
@@ -570,25 +588,28 @@ async def upload_catalog(file: UploadFile = File(...), db: Session = Depends(get
 
 
 @app.post("/api/admin/clear-prices")
-async def clear_prices(db: Session = Depends(get_db)):
-    running = active_jobs()
+async def clear_prices(db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
+    running = active_jobs(current_user.user_id)
     if running:
         raise HTTPException(status_code=409, detail="Нельзя чистить базу, пока идёт обработка файлов. Дождись статуса “готово”.")
     try:
+        stored_paths = [d.stored_path for d in db.query(PriceDocument).filter(PriceDocument.user_id == current_user.user_id).all() if d.stored_path]
         with DB_WRITE_LOCK:
-            items = db.query(PriceItem).delete(synchronize_session=False)
-            docs = db.query(PriceDocument).delete(synchronize_session=False)
-            partners = db.query(Partner).delete(synchronize_session=False)
+            items = db.query(PriceItem).filter(PriceItem.user_id == current_user.user_id).delete(synchronize_session=False)
+            docs = db.query(PriceDocument).filter(PriceDocument.user_id == current_user.user_id).delete(synchronize_session=False)
+            partners = db.query(Partner).filter(Partner.user_id == current_user.user_id).delete(synchronize_session=False)
             db.commit()
-            services_count = db.query(Service).count()
+            services_count = db.query(Service).filter(Service.user_id == current_user.user_id).count()
         with JOBS_LOCK:
-            JOBS.clear()
-        for stored_file in UPLOAD_DIR.glob("*"):
-            if stored_file.is_file():
-                try:
-                    stored_file.unlink()
-                except OSError:
-                    pass
+            for job_id in [jid for jid, job in JOBS.items() if job.get("user_id") == current_user.user_id]:
+                JOBS.pop(job_id, None)
+        for stored_path in stored_paths:
+            try:
+                path = Path(stored_path)
+                if path.is_file():
+                    path.unlink()
+            except OSError:
+                pass
         return {
             "message": "Прайсы очищены. Справочник сохранён.",
             "deleted_price_items": items,
@@ -602,9 +623,9 @@ async def clear_prices(db: Session = Depends(get_db)):
 
 
 @app.post("/api/partners")
-async def upsert_partner(payload: PartnerUpdateRequest, db: Session = Depends(get_db)):
+async def upsert_partner(payload: PartnerUpdateRequest, db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
     with DB_WRITE_LOCK:
-        partner = get_or_create_partner(db, payload.name, city=payload.city)
+        partner = get_or_create_partner(db, payload.name, user_id=current_user.user_id, city=payload.city)
         partner.address = payload.address
         partner.bin = payload.bin
         partner.contact_email = payload.contact_email
@@ -619,7 +640,7 @@ async def upload_file(
     files: List[UploadFile] = File(...),
     clinic_name: str = Form("Анонимный тест"),
     effective_date: Optional[str] = Form(None),
-    db: Session = Depends(get_db),
+    current_user: AuthUser = Depends(require_user),
 ):
     groq_api_key = os.getenv("GROQ_API_KEY")
     if not groq_api_key:
@@ -641,13 +662,13 @@ async def upload_file(
         for inner_filename, contents in iter_input_files(upload.filename, original_bytes):
             partner_name = infer_partner_name(upload.filename, inner_filename, clinic_name)
             partners_seen.add(partner_name)
-            file_payloads.append({"index": index, "upload_filename": upload.filename, "inner_filename": inner_filename, "partner_name": partner_name, "contents": contents})
+            file_payloads.append({"index": index, "upload_filename": upload.filename, "inner_filename": inner_filename, "partner_name": partner_name, "contents": contents, "user_id": current_user.user_id})
             documents.append({"index": index, "clinic_name": partner_name, "file_name": inner_filename, "status": "pending", "items": 0, "review_items": 0, "error": None})
             index += 1
 
     job_id = str(uuid.uuid4())
     with JOBS_LOCK:
-        JOBS[job_id] = {"job_id": job_id, "status": "processing", "clinic_name": clinic_name, "partners_detected": sorted(partners_seen), "total_files": len(documents), "processed_files": 0, "items_found": 0, "needs_review": 0, "documents": documents, "data": []}
+        JOBS[job_id] = {"job_id": job_id, "user_id": current_user.user_id, "status": "processing", "clinic_name": clinic_name, "partners_detected": sorted(partners_seen), "total_files": len(documents), "processed_files": 0, "items_found": 0, "needs_review": 0, "documents": documents, "data": []}
     for payload in file_payloads:
         process_file_payload(job_id, payload, parsed_effective_date, groq_api_key)
     with JOBS_LOCK:
@@ -656,8 +677,8 @@ async def upload_file(
 
 
 @app.get("/api/services")
-async def list_services(category: str | None = None, q: str | None = None, db: Session = Depends(get_db)):
-    query = db.query(Service).filter(Service.is_active == True)  # noqa: E712
+async def list_services(category: str | None = None, q: str | None = None, db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
+    query = db.query(Service).filter(Service.user_id == current_user.user_id, Service.is_active == True)  # noqa: E712
     services = query.order_by(Service.category, Service.service_name).limit(5000).all()
     if category:
         services = [service for service in services if ci_contains(category, service.category)]
@@ -667,14 +688,17 @@ async def list_services(category: str | None = None, q: str | None = None, db: S
 
 
 @app.get("/api/services/{service_id}/partners")
-async def service_partners(service_id: str, db: Session = Depends(get_db)):
-    items = db.query(PriceItem).filter(PriceItem.service_id == service_id, PriceItem.is_active == True).order_by(PriceItem.price_resident_kzt.asc()).all()  # noqa: E712
+async def service_partners(service_id: str, db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
+    service = db.query(Service).filter(Service.service_id == service_id, Service.user_id == current_user.user_id).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Услуга не найдена")
+    items = db.query(PriceItem).filter(PriceItem.user_id == current_user.user_id, PriceItem.service_id == service_id, PriceItem.is_active == True).order_by(PriceItem.price_resident_kzt.asc()).all()  # noqa: E712
     return [item_to_response(item) for item in items]
 
 
 @app.get("/api/partners")
-async def list_partners(city: str | None = None, is_active: bool | None = None, db: Session = Depends(get_db)):
-    query = db.query(Partner)
+async def list_partners(city: str | None = None, is_active: bool | None = None, db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
+    query = db.query(Partner).filter(Partner.user_id == current_user.user_id)
     if is_active is not None:
         query = query.filter(Partner.is_active == is_active)
     partners = query.order_by(Partner.name).limit(5000).all()
@@ -684,20 +708,23 @@ async def list_partners(city: str | None = None, is_active: bool | None = None, 
 
 
 @app.get("/api/partners/{partner_id}/services")
-async def partner_services(partner_id: str, db: Session = Depends(get_db)):
-    items = db.query(PriceItem).filter(PriceItem.partner_id == partner_id, PriceItem.is_active == True).order_by(PriceItem.service_name_raw).all()  # noqa: E712
+async def partner_services(partner_id: str, db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
+    partner = db.query(Partner).filter(Partner.partner_id == partner_id, Partner.user_id == current_user.user_id).first()
+    if not partner:
+        raise HTTPException(status_code=404, detail="Партнёр не найден")
+    items = db.query(PriceItem).filter(PriceItem.user_id == current_user.user_id, PriceItem.partner_id == partner_id, PriceItem.is_active == True).order_by(PriceItem.service_name_raw).all()  # noqa: E712
     return [item_to_response(item) for item in items]
 
 
 @app.get("/api/search")
-async def search(q: str, db: Session = Depends(get_db)):
+async def search(q: str, db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
     q = q.strip()
     if not q:
         return {"services": [], "partners": [], "prices": []}
 
-    services_all = db.query(Service).filter(Service.is_active == True).order_by(Service.category, Service.service_name).limit(5000).all()  # noqa: E712
-    partners_all = db.query(Partner).order_by(Partner.name).limit(5000).all()
-    prices_all = db.query(PriceItem).filter(PriceItem.is_active == True).order_by(PriceItem.created_at.desc()).limit(15000).all()  # noqa: E712
+    services_all = db.query(Service).filter(Service.user_id == current_user.user_id, Service.is_active == True).order_by(Service.category, Service.service_name).limit(5000).all()  # noqa: E712
+    partners_all = db.query(Partner).filter(Partner.user_id == current_user.user_id).order_by(Partner.name).limit(5000).all()
+    prices_all = db.query(PriceItem).filter(PriceItem.user_id == current_user.user_id, PriceItem.is_active == True).order_by(PriceItem.created_at.desc()).limit(15000).all()  # noqa: E712
 
     services = [service for service in services_all if service_matches_query(service, q)][:50]
     partners = [partner for partner in partners_all if partner_matches_query(partner, q)][:50]
@@ -706,17 +733,17 @@ async def search(q: str, db: Session = Depends(get_db)):
 
 
 @app.get("/api/unmatched")
-async def unmatched(db: Session = Depends(get_db)):
-    items = db.query(PriceItem).filter(or_(PriceItem.service_id.is_(None), PriceItem.needs_review == True)).order_by(PriceItem.created_at.desc()).limit(500).all()  # noqa: E712
+async def unmatched(db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
+    items = db.query(PriceItem).filter(PriceItem.user_id == current_user.user_id, or_(PriceItem.service_id.is_(None), PriceItem.needs_review == True)).order_by(PriceItem.created_at.desc()).limit(500).all()  # noqa: E712
     return [item_to_response(item) for item in items]
 
 
 @app.post("/api/match")
-async def manual_match(payload: ManualMatchRequest, db: Session = Depends(get_db)):
-    item = db.query(PriceItem).filter(PriceItem.item_id == payload.item_id).first()
+async def manual_match(payload: ManualMatchRequest, db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
+    item = db.query(PriceItem).filter(PriceItem.user_id == current_user.user_id, PriceItem.item_id == payload.item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Позиция прайса не найдена")
-    service = db.query(Service).filter(Service.service_id == payload.service_id).first()
+    service = db.query(Service).filter(Service.user_id == current_user.user_id, Service.service_id == payload.service_id).first()
     if not service:
         raise HTTPException(status_code=404, detail="Услуга справочника не найдена")
 
@@ -733,26 +760,26 @@ async def manual_match(payload: ManualMatchRequest, db: Session = Depends(get_db
 
 
 @app.get("/api/prices")
-async def get_prices(clinic_name: str = None, db: Session = Depends(get_db)):
-    query = db.query(PriceItem).join(Partner)
+async def get_prices(clinic_name: str = None, db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
+    query = db.query(PriceItem).join(Partner).filter(PriceItem.user_id == current_user.user_id)
     if clinic_name:
         query = query.filter(Partner.name == clinic_name)
     return [item_to_response(item) for item in query.order_by(PriceItem.created_at.desc()).limit(1000).all()]
 
 
 @app.get("/api/stats")
-async def stats(db: Session = Depends(get_db)):
-    total_docs = db.query(PriceDocument).count()
-    total_items = db.query(PriceItem).count()
-    matched_items = db.query(PriceItem).filter(PriceItem.service_id.isnot(None)).count()
-    review_items = db.query(PriceItem).filter(PriceItem.needs_review == True).count()  # noqa: E712
+async def stats(db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
+    total_docs = db.query(PriceDocument).filter(PriceDocument.user_id == current_user.user_id).count()
+    total_items = db.query(PriceItem).filter(PriceItem.user_id == current_user.user_id).count()
+    matched_items = db.query(PriceItem).filter(PriceItem.user_id == current_user.user_id, PriceItem.service_id.isnot(None)).count()
+    review_items = db.query(PriceItem).filter(PriceItem.user_id == current_user.user_id, PriceItem.needs_review == True).count()  # noqa: E712
     return {
-        "partners": db.query(Partner).count(),
-        "services": db.query(Service).count(),
+        "partners": db.query(Partner).filter(Partner.user_id == current_user.user_id).count(),
+        "services": db.query(Service).filter(Service.user_id == current_user.user_id).count(),
         "documents": total_docs,
         "price_items": total_items,
         "matched_items": matched_items,
         "auto_normalization_percent": round((matched_items / total_items * 100), 2) if total_items else 0,
         "needs_review": review_items,
-        "catalog_source": str(preferred_catalog_path()),
+        "catalog_source": str(preferred_catalog_path(current_user.user_id)),
     }
