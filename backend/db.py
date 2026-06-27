@@ -32,12 +32,37 @@ def default_sqlite_path() -> str:
 DB_PATH = os.getenv("DATABASE_PATH", default_sqlite_path())
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
 LOW_PRICE_REVIEW_THRESHOLD_KZT = float(os.getenv("LOW_PRICE_REVIEW_THRESHOLD_KZT", "1000"))
+SQLITE_BUSY_TIMEOUT_MS = int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "30000"))
 
 if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
-connect_args = {"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args=connect_args)
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+    connect_args = {
+        "check_same_thread": False,
+        "timeout": SQLITE_BUSY_TIMEOUT_MS / 1000,
+    }
+else:
+    connect_args = {}
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args=connect_args,
+    pool_pre_ping=True,
+)
+
+
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragmas(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -120,55 +145,47 @@ class PriceItem(Base):
     doc_id = Column(String, ForeignKey("price_documents.doc_id"), nullable=False, index=True)
     partner_id = Column(String, ForeignKey("partners.partner_id"), nullable=False, index=True)
     service_id = Column(String, ForeignKey("services.service_id"), nullable=True, index=True)
-
-    service_name_raw = Column(String, nullable=False, index=True)
     service_code_source = Column(String, nullable=True, index=True)
-    normalized_name = Column(String, nullable=True, index=True)
+    service_name_raw = Column(Text, nullable=False)
+    normalized_name = Column(Text, nullable=True)
     match_confidence = Column(Float, default=0)
     match_method = Column(String, nullable=True)
-
-    price_resident_kzt = Column(Float, nullable=True)
+    price_resident_kzt = Column(Float, nullable=True, index=True)
     price_nonresident_kzt = Column(Float, nullable=True)
     price_original = Column(Float, nullable=True)
     currency_original = Column(String, default="KZT")
-
-    is_verified = Column(Boolean, default=False, index=True)
     needs_review = Column(Boolean, default=False, index=True)
-    verification_note = Column(String, nullable=True)
+    is_verified = Column(Boolean, default=False, index=True)
+    verification_note = Column(Text, nullable=True)
     effective_date = Column(Date, default=date.today, index=True)
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     document = relationship("PriceDocument", back_populates="price_items")
     partner = relationship("Partner", back_populates="price_items")
     service = relationship("Service", back_populates="price_items")
 
 
-def _append_note(current: str | None, note: str) -> str:
-    current = (current or "").strip()
-    if not current:
+def _append_note(existing: str | None, note: str) -> str:
+    if not existing:
         return note
-    if note in current:
-        return current
-    return f"{current}; {note}"
+    if note in existing:
+        return existing
+    return f"{existing}; {note}"
 
 
 @event.listens_for(PriceItem, "before_insert")
 @event.listens_for(PriceItem, "before_update")
 def flag_low_price_for_review(mapper, connection, target: PriceItem) -> None:
-    """Generic data-quality guard: suspiciously low medical prices go to review.
-
-    We do not delete them because some cheap lab/service rows can be real.
-    We only mark them for operator review.
-    """
-    price = target.price_resident_kzt
     if target.is_verified:
         return
+    price = target.price_resident_kzt
     if price is not None and 0 < float(price) < LOW_PRICE_REVIEW_THRESHOLD_KZT:
         target.needs_review = True
         target.verification_note = _append_note(
             target.verification_note,
-            f"Подозрительно низкая цена < {int(LOW_PRICE_REVIEW_THRESHOLD_KZT)} ₸",
+            f"Подозрительно низкая цена < {LOW_PRICE_REVIEW_THRESHOLD_KZT:g} ₸",
         )
 
 
@@ -180,34 +197,25 @@ def get_db():
         db.close()
 
 
-def get_or_create_partner(db, name: str, city: str | None = None) -> Partner:
-    clean_name = (name or "Анонимный тест").strip() or "Анонимный тест"
-    partner = db.query(Partner).filter(Partner.name == clean_name).first()
+def get_or_create_partner(db, name: str, **kwargs) -> Partner:
+    name = (name or "Анонимный тест").strip() or "Анонимный тест"
+    partner = db.query(Partner).filter(Partner.name == name).first()
     if partner:
-        if city and not partner.city:
-            partner.city = city
-        partner.updated_at = datetime.utcnow()
         return partner
-
-    partner = Partner(name=clean_name, city=city)
+    partner = Partner(name=name, **kwargs)
     db.add(partner)
     db.flush()
     return partner
 
 
-# Legacy table kept so old /api/prices code does not break during direct main updates.
-# The new MVP flow uses Partner/Service/PriceDocument/PriceItem.
+# Backward-compatible alias for old code paths/tests.
 class ServicePrice(Base):
-    __tablename__ = "service_prices"
+    __tablename__ = "service_prices_legacy"
 
     id = Column(String, primary_key=True, default=new_uuid)
     clinic_name = Column(String, index=True)
-    service_code = Column(String, nullable=True)
-    original_name = Column(String)
-    standardized_name = Column(String, index=True)
+    service_name = Column(String, index=True)
     price = Column(Float)
-    category = Column(String, nullable=True, index=True)
-    confidence = Column(Float, default=100)
-
-
-Base.metadata.create_all(bind=engine)
+    category = Column(String, nullable=True)
+    source_file = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
