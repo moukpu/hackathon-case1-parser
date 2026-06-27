@@ -54,12 +54,35 @@ function docBadge(doc) {
   if (doc.error || doc.status === 'error' || doc.status === 'failed') return badge('error');
   if (doc.status === 'processing') return badge('processing');
   if (doc.status === 'pending') return badge('pending');
-  // Документ может иметь позиции на ревью, но сам файл обработан нормально.
   return badge('done');
 }
 function itemStatus(item) { return item.needs_review ? '<span class="badge warn">ревью</span>' : '<span class="badge ok">ok</span>'; }
 function table(headers, rows, empty = 'Ничего', extraClass = '') {
   return `<div class="table-wrap ${extraClass}"><table class="table"><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows || `<tr><td colspan="${headers.length}" class="muted">${esc(empty)}</td></tr>`}</tbody></table></div>`;
+}
+
+function scrollKey(el, index) {
+  const named = Array.from(el.classList || []).filter(c => c !== 'table-wrap').join('.');
+  return named || `table-${index}`;
+}
+function captureScroll(root) {
+  if (!root) return null;
+  const state = { rootTop: root.scrollTop || 0, tables: {} };
+  root.querySelectorAll('.table-wrap').forEach((el, i) => {
+    state.tables[scrollKey(el, i)] = { top: el.scrollTop || 0, left: el.scrollLeft || 0 };
+  });
+  return state;
+}
+function restoreScroll(root, state) {
+  if (!root || !state) return;
+  root.scrollTop = state.rootTop || 0;
+  root.querySelectorAll('.table-wrap').forEach((el, i) => {
+    const saved = state.tables[scrollKey(el, i)];
+    if (saved) {
+      el.scrollTop = saved.top || 0;
+      el.scrollLeft = saved.left || 0;
+    }
+  });
 }
 
 async function refreshStats() {
@@ -101,7 +124,7 @@ $('priceForm')?.addEventListener('submit', async (e) => {
   Array.from($('priceFiles').files).forEach(f => fd.append('files', f));
   try {
     const job = await api('/api/upload-async', { method: 'POST', body: fd });
-    renderJob(job);
+    renderJob(job, false);
     pollJob(job.job_id);
   } catch(e) { $('uploadResult').innerHTML = `<div class="card"><span class="badge bad">${esc(e.message)}</span></div>`; }
 });
@@ -110,7 +133,7 @@ async function pollJob(jobId) {
   currentJobTimer = setInterval(async () => {
     try {
       const job = await api('/api/jobs/' + encodeURIComponent(jobId));
-      renderJob(job);
+      renderJob(job, true);
       if (['done','finished_with_errors','error'].includes(job.status)) {
         clearInterval(currentJobTimer);
         loadPartners();
@@ -123,8 +146,10 @@ async function pollJob(jobId) {
   }, 2000);
 }
 
-function renderJob(job) {
-  $('uploadResult').style.display = 'block';
+function renderJob(job, keepScroll = true) {
+  const root = $('uploadResult');
+  const scrollState = keepScroll ? captureScroll(root) : null;
+  root.style.display = 'block';
   const docs = job.documents || [];
   const docRows = docs.map(doc => {
     const error = doc.error ? `<span class="badge bad">${esc(doc.error)}</span>` : '<span class="muted">—</span>';
@@ -139,7 +164,8 @@ function renderJob(job) {
     if (items.length >= 500) break;
   }
   const itemRows = items.map(item => `<tr><td><b>${esc(item.clinic_name || '—')}</b></td><td>${esc(item.standardized_name || item.original_name)}</td><td>${money(item.price)}</td><td>${esc(item.category || '—')}</td><td>${esc(item.confidence)}%</td><td>${itemStatus(item)}</td></tr>`).join('');
-  $('uploadResult').innerHTML = `<div class="grid-3 job-metrics"><div class="metric"><div class="metric-label">Статус</div><div style="margin-top:8px">${badge(job.status)}</div></div><div class="metric"><div class="metric-label">Файлы</div><div class="metric-value">${job.processed_files || 0}/${job.total_files || 0}</div></div><div class="metric"><div class="metric-label">Позиции / ревью</div><div class="metric-value">${job.items_found || 0} / ${job.needs_review || 0}</div></div></div>${table(['Клиника','Год','Файл','Статус','Услуг','Ревью','Ошибка'], docRows, 'Нет файлов', 'docs-table')}<div class="section-gap"></div>${table(['Клиника','Услуга','Цена','Категория','Match','Статус'], itemRows, 'Позиции пока не извлечены', 'items-table')}`;
+  root.innerHTML = `<div class="grid-3 job-metrics"><div class="metric"><div class="metric-label">Статус</div><div style="margin-top:8px">${badge(job.status)}</div></div><div class="metric"><div class="metric-label">Файлы</div><div class="metric-value">${job.processed_files || 0}/${job.total_files || 0}</div></div><div class="metric"><div class="metric-label">Позиции / ревью</div><div class="metric-value">${job.items_found || 0} / ${job.needs_review || 0}</div></div></div>${table(['Клиника','Год','Файл','Статус','Услуг','Ревью','Ошибка'], docRows, 'Нет файлов', 'docs-table')}<div class="section-gap"></div>${table(['Клиника','Услуга','Цена','Категория','Match','Статус'], itemRows, 'Позиции пока не извлечены', 'items-table')}`;
+  requestAnimationFrame(() => restoreScroll(root, scrollState));
 }
 
 async function loadPartners() {
