@@ -1,3 +1,11 @@
+(function loadAuthUi() {
+  if (document.getElementById('authUiScript')) return;
+  const script = document.createElement('script');
+  script.id = 'authUiScript';
+  script.src = '/frontend/auth_ui.js';
+  document.head.appendChild(script);
+})();
+
 const clearBtn = document.getElementById('clearDbBtn');
 const clearResult = document.getElementById('clearDbResult');
 
