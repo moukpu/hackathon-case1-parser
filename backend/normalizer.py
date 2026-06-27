@@ -88,10 +88,24 @@ def dataframe_from_catalog(file_name: str, file_bytes: bytes) -> pd.DataFrame:
 
 
 def import_service_catalog(db: Session, file_name: str, file_bytes: bytes) -> dict[str, int]:
+    """Import catalog with minimal SQLite lock time.
+
+    Older version queried inside the row loop. SQLAlchemy autoflush could start a
+    write transaction before each SELECT and hold SQLite locked for a long time.
+    This version loads existing services once, updates in memory, then commits once.
+    """
     df = dataframe_from_catalog(file_name, file_bytes).fillna("")
     created = 0
     updated = 0
     skipped = 0
+
+    existing = db.query(Service).all()
+    by_code: dict[str, Service] = {}
+    by_name_category: dict[tuple[str, str], Service] = {}
+    for service in existing:
+        if service.source_code:
+            by_code[str(service.source_code)] = service
+        by_name_category[(service.service_name or "", service.category or "")] = service
 
     for raw_row in df.to_dict(orient="records"):
         row = {str(k).strip(): v for k, v in raw_row.items()}
@@ -110,12 +124,11 @@ def import_service_catalog(db: Session, file_name: str, file_bytes: bytes) -> di
 
         category = str(category).strip() if category else None
         service_name = str(service_name).strip()
+        name_key = (service_name, category or "")
 
-        service = None
-        if source_code:
-            service = db.query(Service).filter(Service.source_code == source_code).first()
+        service = by_code.get(source_code) if source_code else None
         if service is None:
-            service = db.query(Service).filter(Service.service_name == service_name, Service.category == category).first()
+            service = by_name_category.get(name_key)
 
         if service:
             service.service_name = service_name
@@ -123,8 +136,10 @@ def import_service_catalog(db: Session, file_name: str, file_bytes: bytes) -> di
             service.tarificatr_code = tarificatr_code
             if source_code:
                 service.source_code = source_code
+                by_code[source_code] = service
             service.set_synonyms(synonyms)
             service.is_active = True
+            by_name_category[name_key] = service
             updated += 1
         else:
             service = Service(
@@ -137,6 +152,9 @@ def import_service_catalog(db: Session, file_name: str, file_bytes: bytes) -> di
             )
             service.set_synonyms(synonyms)
             db.add(service)
+            if source_code:
+                by_code[source_code] = service
+            by_name_category[name_key] = service
             created += 1
 
     db.commit()
@@ -199,7 +217,6 @@ def match_service(
     if not choices:
         return MatchResult(None, 0, "no_choices", True)
 
-    # WRatio handles extra words better than token_sort_ratio for dirty price rows.
     best = process.extractOne(normalized_raw, list(choices.keys()), scorer=fuzz.WRatio)
     if not best:
         return MatchResult(None, 0, "no_match", True)
