@@ -9,3 +9,6 @@ xlrd
 python-docx
 rapidfuzz
 groq
+PyMuPDF
+pytesseract
+Pillow
