@@ -2,6 +2,7 @@ import json
 import os
 import uuid
 from datetime import date, datetime
+from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import (
@@ -19,9 +20,21 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
-DB_PATH = os.getenv("DATABASE_PATH", os.path.join(os.path.dirname(__file__), "..", "prices.db"))
+
+def default_sqlite_path() -> str:
+    """Prefer Railway Volume mount if it exists, otherwise local repo DB."""
+    volume_dir = Path(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/data"))
+    if volume_dir.exists() and volume_dir.is_dir():
+        return str(volume_dir / "prices.db")
+    return os.path.join(os.path.dirname(__file__), "..", "prices.db")
+
+
+DB_PATH = os.getenv("DATABASE_PATH", default_sqlite_path())
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
 LOW_PRICE_REVIEW_THRESHOLD_KZT = float(os.getenv("LOW_PRICE_REVIEW_THRESHOLD_KZT", "1000"))
+
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 connect_args = {"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args=connect_args)
