@@ -9,23 +9,23 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
-    body{font-family:Inter,system-ui,sans-serif;background:linear-gradient(135deg,#eef4ff,#f8f1ff);min-height:100vh}.glass{background:rgba(255,255,255,.78);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.7)}.tab-active{background:linear-gradient(135deg,#4f46e5,#9333ea);color:#fff;box-shadow:0 12px 24px rgba(79,70,229,.22)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    body{font-family:Inter,system-ui,sans-serif;background:radial-gradient(circle at 15% 10%,#eef2ff,transparent 32%),linear-gradient(135deg,#f8fafc,#eef4ff);min-height:100vh}.glass{background:rgba(255,255,255,.82);backdrop-filter:blur(14px);border:1px solid rgba(226,232,240,.8)}.tab-active{background:#0f172a;color:#fff;box-shadow:0 14px 28px rgba(15,23,42,.16)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.file-drop{border:1.5px dashed #c7d2fe;background:linear-gradient(180deg,#fff,#f8fbff)}.file-drop:hover{border-color:#6366f1;background:#fff}.hidden-file{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}.pill{border:1px solid #e2e8f0;background:#fff;border-radius:999px;padding:.45rem .75rem;font-size:.8rem;font-weight:700;color:#475569}
   </style>
 </head>
 <body class="text-slate-800 p-4 md:p-8">
   <div class="max-w-7xl mx-auto">
-    <header class="mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+    <header class="mb-6 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
       <div>
-        <div class="text-sm font-bold tracking-wide uppercase text-indigo-600 mb-2">Hackathon 2025 · MedArchive</div>
+        <div class="text-sm font-bold tracking-wide uppercase text-indigo-600 mb-2">MedArchive · Hackathon</div>
         <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight text-slate-950">Парсер прайсов клиник</h1>
-        <p class="mt-3 text-slate-500 text-lg">Архивы прайсов → извлечение → справочник → ревью → поиск цен.</p>
+        <p class="mt-3 text-slate-500 text-lg">ZIP/PDF/DOCX/XLSX/XLS → услуги и цены → справочник → ревью → поиск.</p>
       </div>
-      <a href="/docs" target="_blank" class="inline-flex items-center justify-center px-5 py-3 rounded-2xl bg-slate-950 text-white font-semibold hover:bg-slate-800">Swagger /docs</a>
+      <a href="/docs" target="_blank" class="inline-flex items-center justify-center px-5 py-3 rounded-2xl bg-slate-950 text-white font-semibold hover:bg-slate-800">API /docs</a>
     </header>
 
     <section id="kpi" class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6"></section>
 
-    <nav class="glass p-2 rounded-3xl shadow-xl shadow-indigo-100/50 mb-6 flex flex-wrap gap-2">
+    <nav class="glass p-2 rounded-3xl shadow-xl shadow-indigo-100/40 mb-6 flex flex-wrap gap-2">
       <button class="tab tab-active px-4 py-3 rounded-2xl font-bold" data-tab="dashboard">Дашборд</button>
       <button class="tab px-4 py-3 rounded-2xl font-bold text-slate-600 hover:bg-white" data-tab="catalog">Справочник</button>
       <button class="tab px-4 py-3 rounded-2xl font-bold text-slate-600 hover:bg-white" data-tab="upload">Прайсы</button>
@@ -34,46 +34,54 @@
     </nav>
 
     <main class="space-y-6">
-      <section id="dashboard" class="tab-panel glass rounded-3xl p-6 shadow-xl shadow-indigo-100/50">
+      <section id="dashboard" class="tab-panel glass rounded-3xl p-6 shadow-xl shadow-indigo-100/40">
         <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-          <div><h2 class="text-2xl font-extrabold">Состояние MVP</h2><p class="text-slate-500 mt-1">Метрики обработки и нормализации.</p></div>
+          <div><h2 class="text-2xl font-extrabold">Статус системы</h2><p class="text-slate-500 mt-1">Ключевые метрики по ТЗ.</p></div>
           <button id="refreshBtn" class="px-5 py-3 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700">Обновить</button>
         </div>
-        <div class="grid md:grid-cols-2 gap-5">
-          <div class="bg-white/80 rounded-2xl p-5 border border-slate-100"><h3 class="font-bold mb-3">Закрыто по ТЗ</h3><ul class="space-y-2 text-sm text-slate-600"><li>✅ ZIP, PDF, XLSX/XLS/CSV, DOCX extraction</li><li>✅ БД: партнёры, документы, услуги, позиции прайса</li><li>✅ Импорт справочника и fuzzy/exact matching</li><li>✅ API поиска, unmatched queue, ручной match</li><li>✅ Low price review guard</li><li>⬜ OCR сканов — следующий этап</li></ul></div>
-          <div class="bg-white/80 rounded-2xl p-5 border border-slate-100"><h3 class="font-bold mb-3">Демо-сценарий</h3><ol class="space-y-2 text-sm text-slate-600 list-decimal pl-5"><li>Подтянуть или загрузить справочник.</li><li>Загрузить ZIP клиник.</li><li>Показать auto-match и live-статусы файлов.</li><li>Открыть low-price / low-confidence review.</li><li>Подтвердить спорную позицию и найти цены партнёров.</li></ol></div>
+        <div class="grid md:grid-cols-3 gap-4">
+          <div class="bg-white rounded-2xl p-5 border border-slate-100"><h3 class="font-extrabold mb-2">Пайплайн</h3><p class="text-sm text-slate-500">Файл → извлечение → match → БД → review.</p></div>
+          <div class="bg-white rounded-2xl p-5 border border-slate-100"><h3 class="font-extrabold mb-2">Форматы</h3><p class="text-sm text-slate-500">ZIP, PDF, DOCX, XLSX, XLS, CSV, TXT.</p></div>
+          <div class="bg-white rounded-2xl p-5 border border-slate-100"><h3 class="font-extrabold mb-2">Контроль качества</h3><p class="text-sm text-slate-500">Unmatched, low-confidence и low-price уходят в ревью.</p></div>
         </div>
       </section>
 
-      <section id="catalog" class="tab-panel hidden glass rounded-3xl p-6 shadow-xl shadow-indigo-100/50">
-        <h2 class="text-2xl font-extrabold mb-2">Справочник услуг</h2><p class="text-slate-500 mb-5">Загрузи XLSX организаторов или используй встроенный демо-справочник.</p>
+      <section id="catalog" class="tab-panel hidden glass rounded-3xl p-6 shadow-xl shadow-indigo-100/40">
+        <h2 class="text-2xl font-extrabold mb-2">Справочник услуг</h2><p class="text-slate-500 mb-5">Импорт справочника для сопоставления услуг.</p>
         <div class="grid md:grid-cols-2 gap-5">
-          <form id="catalogForm" class="bg-white/80 rounded-2xl p-5 border border-slate-100 space-y-4"><label class="block font-bold">Файл XLSX/CSV/JSON</label><input id="catalogFile" type="file" accept=".xlsx,.csv,.json" required class="block w-full text-sm"><button class="w-full px-5 py-3 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700">Загрузить справочник</button></form>
-          <div class="bg-white/80 rounded-2xl p-5 border border-slate-100 space-y-4"><h3 class="font-bold">Встроенный справочник</h3><p class="text-sm text-slate-500">Для быстрого демо после деплоя.</p><button id="bootstrapBtn" class="w-full px-5 py-3 rounded-2xl bg-slate-950 text-white font-bold hover:bg-slate-800">Подтянуть встроенный справочник</button></div>
+          <form id="catalogForm" class="bg-white rounded-2xl p-5 border border-slate-100 space-y-4"><label class="block font-bold">XLSX / CSV / JSON</label><input id="catalogFile" type="file" accept=".xlsx,.csv,.json" required class="block w-full text-sm"><button class="w-full px-5 py-3 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700">Импортировать</button></form>
+          <div class="bg-white rounded-2xl p-5 border border-slate-100 space-y-4"><h3 class="font-bold">Демо-справочник</h3><p class="text-sm text-slate-500">Быстрый старт после деплоя.</p><button id="bootstrapBtn" class="w-full px-5 py-3 rounded-2xl bg-slate-950 text-white font-bold hover:bg-slate-800">Загрузить встроенный</button></div>
         </div><pre id="catalogResult" class="mono mt-5 p-4 rounded-2xl bg-slate-950 text-slate-100 text-xs overflow-auto hidden"></pre>
       </section>
 
-      <section id="upload" class="tab-panel hidden glass rounded-3xl p-6 shadow-xl shadow-indigo-100/50">
-        <h2 class="text-2xl font-extrabold mb-2">Загрузка прайсов</h2><p class="text-slate-500 mb-5">Можно загрузить несколько файлов или ZIP.</p>
-        <form id="priceForm" class="bg-white/80 rounded-2xl p-5 border border-slate-100 space-y-4">
-          <div class="grid md:grid-cols-2 gap-4"><div><label class="block text-sm font-bold mb-2">Клиника</label><input id="clinicName" value="Demo Clinic" class="w-full px-4 py-3 rounded-2xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500"></div><div><label class="block text-sm font-bold mb-2">Дата прайса</label><input id="effectiveDate" type="date" class="w-full px-4 py-3 rounded-2xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500"></div></div>
-          <div><label class="block text-sm font-bold mb-2">Файлы</label><input id="priceFiles" type="file" multiple accept=".zip,.pdf,.xlsx,.xls,.csv,.docx,.txt" required class="block w-full text-sm"></div>
-          <button class="w-full px-5 py-3 rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold hover:opacity-95">Обработать прайс</button>
+      <section id="upload" class="tab-panel hidden glass rounded-3xl p-6 shadow-xl shadow-indigo-100/40">
+        <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-5"><div><h2 class="text-2xl font-extrabold">Загрузка прайсов</h2><p class="text-slate-500 mt-1">Клиника и год определяются из имени файла.</p></div><div class="flex flex-wrap gap-2"><span class="pill">ZIP</span><span class="pill">PDF</span><span class="pill">DOCX</span><span class="pill">XLSX/XLS</span></div></div>
+        <form id="priceForm" class="bg-white rounded-3xl p-5 border border-slate-100 space-y-4">
+          <input id="clinicName" type="hidden" value="Auto">
+          <input id="effectiveDate" type="hidden" value="">
+          <input id="priceFiles" class="hidden-file" type="file" multiple accept=".zip,.pdf,.xlsx,.xls,.csv,.docx,.txt" required>
+          <label for="priceFiles" class="file-drop cursor-pointer rounded-3xl p-8 md:p-10 flex flex-col items-center text-center transition">
+            <div class="w-14 h-14 rounded-2xl bg-indigo-600 text-white grid place-items-center text-2xl mb-4">↥</div>
+            <div class="text-2xl font-extrabold text-slate-950">Закинуть архив прайсов</div>
+            <div id="filePickHint" class="mt-2 text-slate-500">Нажми сюда или перетащи ZIP/PDF/DOCX/XLSX/XLS</div>
+            <div class="mt-5 inline-flex px-5 py-3 rounded-2xl bg-slate-950 text-white font-bold">Выбрать файлы</div>
+          </label>
+          <button class="w-full px-5 py-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-extrabold hover:opacity-95">Запустить парсинг</button>
         </form><div id="uploadResult" class="mt-5 hidden"></div>
       </section>
 
-      <section id="search" class="tab-panel hidden glass rounded-3xl p-6 shadow-xl shadow-indigo-100/50">
-        <h2 class="text-2xl font-extrabold mb-2">Поиск услуг и цен</h2><div class="flex gap-3 mb-5"><input id="searchInput" placeholder="Например: УЗИ, терапевт, общий анализ крови" class="flex-1 px-4 py-3 rounded-2xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500"><button id="searchBtn" class="px-6 py-3 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700">Искать</button></div><div id="searchResult"></div>
+      <section id="search" class="tab-panel hidden glass rounded-3xl p-6 shadow-xl shadow-indigo-100/40">
+        <h2 class="text-2xl font-extrabold mb-2">Поиск цен</h2><div class="flex gap-3 mb-5"><input id="searchInput" placeholder="Название услуги" class="flex-1 px-4 py-3 rounded-2xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500"><button id="searchBtn" class="px-6 py-3 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700">Искать</button></div><div id="searchResult"></div>
       </section>
 
-      <section id="review" class="tab-panel hidden glass rounded-3xl p-6 shadow-xl shadow-indigo-100/50">
-        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-5"><div><h2 class="text-2xl font-extrabold">Очередь ручной проверки</h2><p class="text-slate-500">Низкая уверенность, unmatched, ошибки цены.</p></div><button id="loadReviewBtn" class="px-5 py-3 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700">Обновить очередь</button></div>
-        <div class="bg-white/80 rounded-2xl p-4 border border-slate-100 mb-5 grid md:grid-cols-3 gap-3"><input id="reviewServiceSearch" placeholder="Найти услугу справочника" class="md:col-span-2 px-4 py-3 rounded-2xl border border-slate-200"><button id="reviewServiceBtn" class="px-5 py-3 rounded-2xl bg-slate-950 text-white font-bold">Найти</button><select id="reviewServiceSelect" class="md:col-span-3 px-4 py-3 rounded-2xl border border-slate-200"></select></div>
-        <div id="reviewClientFilters" class="bg-white/80 rounded-2xl p-4 border border-slate-100 mb-5 grid md:grid-cols-5 gap-3 text-sm">
+      <section id="review" class="tab-panel hidden glass rounded-3xl p-6 shadow-xl shadow-indigo-100/40">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-5"><div><h2 class="text-2xl font-extrabold">Ручное ревью</h2><p class="text-slate-500">Unmatched, low-confidence, low-price.</p></div><button id="loadReviewBtn" class="px-5 py-3 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700">Обновить</button></div>
+        <div class="bg-white rounded-2xl p-4 border border-slate-100 mb-5 grid md:grid-cols-3 gap-3"><input id="reviewServiceSearch" placeholder="Услуга справочника" class="md:col-span-2 px-4 py-3 rounded-2xl border border-slate-200"><button id="reviewServiceBtn" class="px-5 py-3 rounded-2xl bg-slate-950 text-white font-bold">Найти match</button><select id="reviewServiceSelect" class="md:col-span-3 px-4 py-3 rounded-2xl border border-slate-200"></select></div>
+        <div id="reviewClientFilters" class="bg-white rounded-2xl p-4 border border-slate-100 mb-5 grid md:grid-cols-5 gap-3 text-sm">
           <input id="reviewClinicFilter" placeholder="Клиника" class="px-4 py-3 rounded-2xl border border-slate-200">
           <input id="reviewMinPrice" type="number" placeholder="Цена от" class="px-4 py-3 rounded-2xl border border-slate-200">
           <input id="reviewMaxPrice" type="number" placeholder="Цена до" class="px-4 py-3 rounded-2xl border border-slate-200">
-          <input id="reviewMaxConfidence" type="number" placeholder="Conf до" class="px-4 py-3 rounded-2xl border border-slate-200">
+          <input id="reviewMaxConfidence" type="number" placeholder="Match до %" class="px-4 py-3 rounded-2xl border border-slate-200">
           <label class="flex items-center gap-2 px-4 py-3 rounded-2xl border border-slate-200 bg-white"><input id="reviewLowOnly" type="checkbox"> low price</label>
           <div id="reviewFilterSummary" class="md:col-span-5 text-xs text-slate-500"></div>
         </div>
@@ -83,5 +91,6 @@
   </div>
   <script src="/frontend/app.js"></script>
   <script src="/frontend/review_filters.js"></script>
+  <script src="/frontend/ui_polish.js"></script>
 </body>
 </html>
