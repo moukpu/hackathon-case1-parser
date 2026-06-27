@@ -40,8 +40,8 @@
           <button id="refreshBtn" class="px-5 py-3 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700">Обновить</button>
         </div>
         <div class="grid md:grid-cols-2 gap-5">
-          <div class="bg-white/80 rounded-2xl p-5 border border-slate-100"><h3 class="font-bold mb-3">Закрыто по ТЗ</h3><ul class="space-y-2 text-sm text-slate-600"><li>✅ ZIP, PDF, XLSX/XLS/CSV, DOCX extraction</li><li>✅ БД: партнёры, документы, услуги, позиции прайса</li><li>✅ Импорт справочника и fuzzy/exact matching</li><li>✅ API поиска, unmatched queue, ручной match</li><li>⬜ OCR сканов — следующий этап</li><li>⬜ Аномалии цены &gt; 50% — следующий этап</li></ul></div>
-          <div class="bg-white/80 rounded-2xl p-5 border border-slate-100"><h3 class="font-bold mb-3">Демо-сценарий</h3><ol class="space-y-2 text-sm text-slate-600 list-decimal pl-5"><li>Подтянуть или загрузить справочник.</li><li>Загрузить прайс или ZIP клиники.</li><li>Показать auto-match и очередь ревью.</li><li>Подтвердить спорные позиции.</li><li>Найти услугу и цены партнёров.</li></ol></div>
+          <div class="bg-white/80 rounded-2xl p-5 border border-slate-100"><h3 class="font-bold mb-3">Закрыто по ТЗ</h3><ul class="space-y-2 text-sm text-slate-600"><li>✅ ZIP, PDF, XLSX/XLS/CSV, DOCX extraction</li><li>✅ БД: партнёры, документы, услуги, позиции прайса</li><li>✅ Импорт справочника и fuzzy/exact matching</li><li>✅ API поиска, unmatched queue, ручной match</li><li>✅ Low price review guard</li><li>⬜ OCR сканов — следующий этап</li></ul></div>
+          <div class="bg-white/80 rounded-2xl p-5 border border-slate-100"><h3 class="font-bold mb-3">Демо-сценарий</h3><ol class="space-y-2 text-sm text-slate-600 list-decimal pl-5"><li>Подтянуть или загрузить справочник.</li><li>Загрузить ZIP клиник.</li><li>Показать auto-match и live-статусы файлов.</li><li>Открыть low-price / low-confidence review.</li><li>Подтвердить спорную позицию и найти цены партнёров.</li></ol></div>
         </div>
       </section>
 
@@ -69,10 +69,19 @@
       <section id="review" class="tab-panel hidden glass rounded-3xl p-6 shadow-xl shadow-indigo-100/50">
         <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-5"><div><h2 class="text-2xl font-extrabold">Очередь ручной проверки</h2><p class="text-slate-500">Низкая уверенность, unmatched, ошибки цены.</p></div><button id="loadReviewBtn" class="px-5 py-3 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700">Обновить очередь</button></div>
         <div class="bg-white/80 rounded-2xl p-4 border border-slate-100 mb-5 grid md:grid-cols-3 gap-3"><input id="reviewServiceSearch" placeholder="Найти услугу справочника" class="md:col-span-2 px-4 py-3 rounded-2xl border border-slate-200"><button id="reviewServiceBtn" class="px-5 py-3 rounded-2xl bg-slate-950 text-white font-bold">Найти</button><select id="reviewServiceSelect" class="md:col-span-3 px-4 py-3 rounded-2xl border border-slate-200"></select></div>
+        <div id="reviewClientFilters" class="bg-white/80 rounded-2xl p-4 border border-slate-100 mb-5 grid md:grid-cols-5 gap-3 text-sm">
+          <input id="reviewClinicFilter" placeholder="Клиника" class="px-4 py-3 rounded-2xl border border-slate-200">
+          <input id="reviewMinPrice" type="number" placeholder="Цена от" class="px-4 py-3 rounded-2xl border border-slate-200">
+          <input id="reviewMaxPrice" type="number" placeholder="Цена до" class="px-4 py-3 rounded-2xl border border-slate-200">
+          <input id="reviewMaxConfidence" type="number" placeholder="Conf до" class="px-4 py-3 rounded-2xl border border-slate-200">
+          <label class="flex items-center gap-2 px-4 py-3 rounded-2xl border border-slate-200 bg-white"><input id="reviewLowOnly" type="checkbox"> low price</label>
+          <div id="reviewFilterSummary" class="md:col-span-5 text-xs text-slate-500"></div>
+        </div>
         <div id="reviewResult"></div>
       </section>
     </main>
   </div>
   <script src="/frontend/app.js"></script>
+  <script src="/frontend/review_filters.js"></script>
 </body>
 </html>
