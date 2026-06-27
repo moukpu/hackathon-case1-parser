@@ -1,42 +1,124 @@
-import pdfplumber
-import pandas as pd
 import io
+import os
+import zipfile
+from typing import Iterable, Tuple
+
+import pandas as pd
+import pdfplumber
+from docx import Document
+
+
+SUPPORTED_EXTENSIONS = (".pdf", ".xlsx", ".xls", ".csv", ".docx", ".txt")
+
+
+def detect_file_format(filename: str, file_bytes: bytes | None = None) -> str:
+    lower = filename.lower()
+    if lower.endswith(".pdf"):
+        return "pdf"
+    if lower.endswith((".xlsx", ".xls")):
+        return "xlsx"
+    if lower.endswith(".docx"):
+        return "docx"
+    if lower.endswith(".csv"):
+        return "csv"
+    if lower.endswith(".zip"):
+        return "zip"
+    return "text"
+
+
+def iter_input_files(filename: str, file_bytes: bytes) -> Iterable[Tuple[str, bytes]]:
+    """Yield original file or files inside ZIP. Skips folders and unsupported hidden files."""
+    if filename.lower().endswith(".zip"):
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
+            for info in archive.infolist():
+                if info.is_dir():
+                    continue
+                inner_name = os.path.basename(info.filename)
+                if not inner_name or inner_name.startswith("."):
+                    continue
+                if not inner_name.lower().endswith(SUPPORTED_EXTENSIONS):
+                    continue
+                yield inner_name, archive.read(info.filename)
+    else:
+        yield filename, file_bytes
+
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
-    text = ""
+    chunks: list[str] = []
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-    return text
+        for page_index, page in enumerate(pdf.pages, start=1):
+            page_text = page.extract_text() or ""
+            if page_text.strip():
+                chunks.append(f"\n--- PDF page {page_index} text ---\n{page_text}")
 
-def extract_text_from_excel(file_bytes: bytes) -> str:
-    try:
-        # Пытаемся прочитать как XLSX/XLS
-        df = pd.read_excel(io.BytesIO(file_bytes), header=None)
-    except Exception:
-        # Если не вышло, пробуем CSV
-        df = pd.read_csv(io.BytesIO(file_bytes), header=None)
-    
-    # Преобразуем DataFrame в строку.
-    # Нам не нужна идеальная структура таблицы для AI, 
-    # LLM сама поймет, где название, а где цена.
-    text = df.to_string(index=False, header=False)
-    return text
+            try:
+                tables = page.extract_tables() or []
+            except Exception:
+                tables = []
+
+            for table_index, table in enumerate(tables, start=1):
+                rows = []
+                for row in table:
+                    rows.append("\t".join("" if cell is None else str(cell).strip() for cell in row))
+                if rows:
+                    chunks.append(f"\n--- PDF page {page_index} table {table_index} ---\n" + "\n".join(rows))
+
+    return "\n".join(chunks).strip()
+
+
+def extract_text_from_excel(file_bytes: bytes, filename: str = "") -> str:
+    lower = filename.lower()
+    if lower.endswith(".csv"):
+        df = pd.read_csv(io.BytesIO(file_bytes), header=None, dtype=str)
+        return df.fillna("").to_string(index=False, header=False)
+
+    sheets = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None, header=None, dtype=str)
+    chunks: list[str] = []
+    for sheet_name, df in sheets.items():
+        df = df.dropna(how="all").fillna("")
+        if df.empty:
+            continue
+        lines = []
+        for row in df.astype(str).values.tolist():
+            cleaned = [cell.strip() for cell in row]
+            if any(cleaned):
+                lines.append("\t".join(cleaned))
+        if lines:
+            chunks.append(f"\n--- XLSX sheet: {sheet_name} ---\n" + "\n".join(lines))
+    return "\n".join(chunks).strip()
+
+
+def extract_text_from_docx(file_bytes: bytes) -> str:
+    doc = Document(io.BytesIO(file_bytes))
+    chunks: list[str] = []
+
+    paragraphs = [p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()]
+    if paragraphs:
+        chunks.append("\n--- DOCX text ---\n" + "\n".join(paragraphs))
+
+    for table_index, table in enumerate(doc.tables, start=1):
+        rows = []
+        for row in table.rows:
+            rows.append("\t".join(cell.text.strip() for cell in row.cells))
+        if rows:
+            chunks.append(f"\n--- DOCX table {table_index} ---\n" + "\n".join(rows))
+
+    return "\n".join(chunks).strip()
+
 
 def extract_text(filename: str, file_bytes: bytes) -> str:
     filename_lower = filename.lower()
     if filename_lower.endswith(".pdf"):
         return extract_text_from_pdf(file_bytes)
-    elif filename_lower.endswith((".xlsx", ".xls")):
-        return extract_text_from_excel(file_bytes)
-    else:
-        # Попробуем прочитать как обычный текст (в том числе CSV)
+    if filename_lower.endswith((".xlsx", ".xls", ".csv")):
+        return extract_text_from_excel(file_bytes, filename)
+    if filename_lower.endswith(".docx"):
+        return extract_text_from_docx(file_bytes)
+
+    try:
+        return file_bytes.decode("utf-8")
+    except UnicodeDecodeError:
         try:
-            return file_bytes.decode('utf-8')
-        except UnicodeDecodeError:
-            try:
-                return file_bytes.decode('cp1251')
-            except UnicodeDecodeError:
-                raise ValueError(f"Формат файла {filename} не поддерживается.")
+            return file_bytes.decode("cp1251")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"Формат файла {filename} не поддерживается.") from exc
