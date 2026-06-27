@@ -84,6 +84,17 @@ def job_doc_to_export_row(doc: dict) -> dict:
     }
 
 
+def missing_job_export_rows(job_id: str) -> list[dict]:
+    return [{
+        "Клиника": "",
+        "Файл": f"job_{job_id}",
+        "Статус": "interrupted",
+        "Услуг": 0,
+        "Ревью": 0,
+        "Ошибка": "Job не найден после рестарта сервера. Конкретный job-export недоступен. Используй экспорт поиска/ревью/партнёра или загрузи архив заново.",
+    }]
+
+
 def rows_to_csv_response(rows: list[dict], columns: list[str], filename: str) -> Response:
     output = io.StringIO()
     output.write("\ufeff")
@@ -183,13 +194,18 @@ async def export_review(file_format: str, db: Session = Depends(get_db), current
 async def export_job(job_id: str, file_format: str, current_user: AuthUser = Depends(require_user)):
     with JOBS_LOCK:
         job = dict(JOBS.get(job_id) or {})
+
+    file_format = (file_format or "csv").lower()
+    filename = f"job_{job_id}"
+
     if not job or job.get("user_id") != current_user.user_id:
-        raise HTTPException(status_code=404, detail="Job не найден. Возможно, сервер перезапустился.")
+        doc_rows = missing_job_export_rows(job_id)
+        if file_format == "xlsx":
+            return rows_to_xlsx_response({"files": (doc_rows, JOB_DOC_COLUMNS)}, safe_export_name(filename))
+        return rows_to_csv_response(doc_rows, JOB_DOC_COLUMNS, safe_export_name(filename))
 
     item_rows = [job_item_to_export_row(item) for item in job.get("data") or []]
     doc_rows = [job_doc_to_export_row(doc) for doc in job.get("documents") or []]
-    filename = f"job_{job_id}"
-    file_format = (file_format or "csv").lower()
     if file_format == "xlsx":
         return rows_to_xlsx_response(
             {
