@@ -14,31 +14,23 @@ from backend.main import (
     JOBS,
     JOBS_LOCK,
     app,
-    ci_contains,
     item_to_response,
     price_item_matches_query,
 )
-from db import Partner, PriceItem, Service, get_db
+from db import Partner, PriceItem, get_db
 
 
 PRICE_EXPORT_COLUMNS = [
     "Клиника",
-    "Документ",
-    "Дата прайса",
-    "Исходная позиция",
-    "Стандартизированная услуга",
+    "Услуга",
+    "Цена KZT",
     "Категория",
-    "Код услуги",
-    "Цена резидент KZT",
-    "Цена нерезидент KZT",
-    "Валюта",
     "Match %",
-    "Метод match",
     "Ревью",
-    "Проверено",
-    "Причина/заметка",
-    "Позиция ID",
+    "Дата",
 ]
+
+REVIEW_EXPORT_COLUMNS = PRICE_EXPORT_COLUMNS + ["Причина"]
 
 JOB_DOC_COLUMNS = [
     "Клиника",
@@ -67,47 +59,35 @@ def normalize_export_value(value):
     return value
 
 
-def price_item_to_export_row(item: PriceItem) -> dict:
+def price_item_to_export_row(item: PriceItem, include_reason: bool = False) -> dict:
     data = item_to_response(item)
-    return {
+    row = {
         "Клиника": data.get("clinic_name"),
-        "Документ": item.document.file_name if item.document else "",
-        "Дата прайса": data.get("effective_date"),
-        "Исходная позиция": data.get("original_name"),
-        "Стандартизированная услуга": data.get("standardized_name"),
+        "Услуга": data.get("standardized_name") or data.get("original_name"),
+        "Цена KZT": data.get("price_resident_kzt"),
         "Категория": data.get("category"),
-        "Код услуги": data.get("service_code"),
-        "Цена резидент KZT": data.get("price_resident_kzt"),
-        "Цена нерезидент KZT": data.get("price_nonresident_kzt"),
-        "Валюта": data.get("currency"),
         "Match %": data.get("confidence"),
-        "Метод match": data.get("match_method"),
         "Ревью": "да" if data.get("needs_review") else "нет",
-        "Проверено": "да" if data.get("is_verified") else "нет",
-        "Причина/заметка": data.get("note"),
-        "Позиция ID": data.get("item_id"),
+        "Дата": data.get("effective_date"),
     }
+    if include_reason:
+        row["Причина"] = data.get("note") or ("Нет match" if not data.get("service_id") else "Нужна проверка")
+    return row
 
 
-def job_item_to_export_row(item: dict) -> dict:
-    return {
+def job_item_to_export_row(item: dict, include_reason: bool = False) -> dict:
+    row = {
         "Клиника": item.get("clinic_name"),
-        "Документ": item.get("doc_id"),
-        "Дата прайса": item.get("effective_date"),
-        "Исходная позиция": item.get("original_name"),
-        "Стандартизированная услуга": item.get("standardized_name"),
+        "Услуга": item.get("standardized_name") or item.get("original_name"),
+        "Цена KZT": item.get("price_resident_kzt") or item.get("price"),
         "Категория": item.get("category"),
-        "Код услуги": item.get("service_code"),
-        "Цена резидент KZT": item.get("price_resident_kzt") or item.get("price"),
-        "Цена нерезидент KZT": item.get("price_nonresident_kzt"),
-        "Валюта": item.get("currency"),
         "Match %": item.get("confidence"),
-        "Метод match": item.get("match_method"),
         "Ревью": "да" if item.get("needs_review") else "нет",
-        "Проверено": "да" if item.get("is_verified") else "нет",
-        "Причина/заметка": item.get("note"),
-        "Позиция ID": item.get("item_id"),
+        "Дата": item.get("effective_date"),
     }
+    if include_reason:
+        row["Причина"] = item.get("note") or ("Нет match" if not item.get("service_id") else "Нужна проверка")
+    return row
 
 
 def job_doc_to_export_row(doc: dict) -> dict:
@@ -147,7 +127,7 @@ def rows_to_xlsx_response(sheets: dict[str, tuple[list[dict], list[str]]], filen
             sheet.append([normalize_export_value(row.get(column)) for column in columns])
         for column_cells in sheet.columns:
             max_len = max(len(str(cell.value or "")) for cell in column_cells)
-            sheet.column_dimensions[column_cells[0].column_letter].width = min(max(max_len + 2, 12), 55)
+            sheet.column_dimensions[column_cells[0].column_letter].width = min(max(max_len + 2, 12), 45)
     buffer = io.BytesIO()
     workbook.save(buffer)
     return Response(
@@ -163,7 +143,7 @@ def export_rows(rows: list[dict], columns: list[str], filename: str, file_format
         raise HTTPException(status_code=400, detail="Поддерживается только csv или xlsx")
     safe_name = safe_export_name(filename)
     if file_format == "xlsx":
-        return rows_to_xlsx_response({"export": (rows, columns)}, safe_name)
+        return rows_to_xlsx_response({"data": (rows, columns)}, safe_name)
     return rows_to_csv_response(rows, columns, safe_name)
 
 
@@ -206,8 +186,8 @@ async def export_review(file_format: str, db: Session = Depends(get_db)):
         .limit(20000)
         .all()
     )
-    rows = [price_item_to_export_row(item) for item in items]
-    return export_rows(rows, PRICE_EXPORT_COLUMNS, "review_queue", file_format)
+    rows = [price_item_to_export_row(item, include_reason=True) for item in items]
+    return export_rows(rows, REVIEW_EXPORT_COLUMNS, "review", file_format)
 
 
 @app.get("/api/export/jobs/{job_id}.{file_format}")
@@ -224,8 +204,8 @@ async def export_job(job_id: str, file_format: str):
     if file_format == "xlsx":
         return rows_to_xlsx_response(
             {
-                "documents": (doc_rows, JOB_DOC_COLUMNS),
-                "items_preview": (item_rows, PRICE_EXPORT_COLUMNS),
+                "files": (doc_rows, JOB_DOC_COLUMNS),
+                "items": (item_rows, PRICE_EXPORT_COLUMNS),
             },
             safe_export_name(filename),
         )
