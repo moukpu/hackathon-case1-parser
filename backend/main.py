@@ -61,6 +61,8 @@ CATALOG_EXTENSIONS = (".csv", ".xlsx", ".xls", ".json")
 
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
+DB_WRITE_LOCK = threading.RLock()
+ACTIVE_JOB_STATUSES = {"queued", "processing"}
 
 
 class ManualMatchRequest(BaseModel):
@@ -120,6 +122,11 @@ def persist_user_catalog(file_name: str, contents: bytes) -> Path:
     target = storage / f"services_catalog_user{suffix}"
     target.write_bytes(contents)
     return target
+
+
+def active_jobs() -> list[dict]:
+    with JOBS_LOCK:
+        return [job for job in JOBS.values() if job.get("status") in ACTIVE_JOB_STATUSES]
 
 
 def infer_partner_name(upload_filename: str, inner_filename: str, fallback: str) -> str:
@@ -192,7 +199,8 @@ def bootstrap_catalog_if_needed(force: bool = False) -> dict:
         catalog_path = preferred_catalog_path()
         if not catalog_path.exists():
             return {"message": "Справочник не найден", "services": current_count, "skipped_bootstrap": True}
-        result = import_service_catalog(db, catalog_path.name, catalog_path.read_bytes())
+        with DB_WRITE_LOCK:
+            result = import_service_catalog(db, catalog_path.name, catalog_path.read_bytes())
         return {"message": "Справочник загружен", **result, "services": db.query(Service).count(), "catalog_source": str(catalog_path)}
     except Exception as exc:
         db.rollback()
@@ -225,8 +233,25 @@ def set_job_file(job_id: str, index: int, **kwargs) -> None:
             job["status"] = "processing"
 
 
+def store_error_document(db: Session, partner_name: str, inner_filename: str, contents: bytes, parsed_effective_date: date, error: str) -> None:
+    partner = get_or_create_partner(db, partner_name)
+    doc = PriceDocument(
+        partner_id=partner.partner_id,
+        file_name=inner_filename,
+        file_format=detect_file_format(inner_filename, contents),
+        effective_date=parsed_effective_date,
+        parse_status="error",
+        parse_log=error,
+    )
+    db.add(doc)
+    db.flush()
+    stored_path = UPLOAD_DIR / f"{doc.doc_id}_{safe_filename(inner_filename)}"
+    stored_path.write_bytes(contents)
+    doc.stored_path = str(stored_path)
+    db.commit()
+
+
 def process_file_payload(job_id: str, payload: dict, parsed_effective_date: date, groq_api_key: str) -> None:
-    db = SessionLocal()
     index = payload["index"]
     inner_filename = payload["inner_filename"]
     contents = payload["contents"]
@@ -234,125 +259,138 @@ def process_file_payload(job_id: str, payload: dict, parsed_effective_date: date
 
     set_job_file(job_id, index, status="processing", error=None)
     try:
-        if db.query(Service).count() == 0:
-            bootstrap_catalog_if_needed(force=False)
-
-        partner = get_or_create_partner(db, partner_name)
-        doc = PriceDocument(
-            partner_id=partner.partner_id,
-            file_name=inner_filename,
-            file_format=detect_file_format(inner_filename, contents),
-            effective_date=parsed_effective_date,
-            parse_status="processing",
-        )
-        db.add(doc)
-        db.flush()
-
-        stored_path = UPLOAD_DIR / f"{doc.doc_id}_{safe_filename(inner_filename)}"
-        stored_path.write_bytes(contents)
-        doc.stored_path = str(stored_path)
-
         raw_text = extract_text(inner_filename, contents)
-        doc.raw_content = raw_text[:200_000]
         if not raw_text.strip():
-            doc.parse_status = "error"
-            doc.parse_log = "Документ не содержит распознаваемого текста. Вероятно, нужен OCR."
-            db.commit()
-            set_job_file(job_id, index, status="error", error=doc.parse_log, items=0, review_items=0)
+            error = "Документ не содержит распознаваемого текста. Вероятно, нужен OCR."
+            db = SessionLocal()
+            try:
+                with DB_WRITE_LOCK:
+                    store_error_document(db, partner_name, inner_filename, contents, parsed_effective_date, error)
+            finally:
+                db.close()
+            set_job_file(job_id, index, status="error", error=error, items=0, review_items=0)
             return
 
         parsed_data = parse_price_list_with_ai(raw_text, groq_api_key)
         if not parsed_data:
-            doc.parse_status = "error"
-            doc.parse_log = "AI не вернул структурированные позиции."
-            db.commit()
-            set_job_file(job_id, index, status="error", error=doc.parse_log, items=0, review_items=0)
+            error = "AI не вернул структурированные позиции."
+            db = SessionLocal()
+            try:
+                with DB_WRITE_LOCK:
+                    store_error_document(db, partner_name, inner_filename, contents, parsed_effective_date, error)
+            finally:
+                db.close()
+            set_job_file(job_id, index, status="error", error=error, items=0, review_items=0)
             return
 
-        created_count = 0
-        review_count = 0
-        response_items = []
+        db = SessionLocal()
+        try:
+            with DB_WRITE_LOCK:
+                if db.query(Service).count() == 0:
+                    bootstrap_catalog_if_needed(force=False)
 
-        for raw_item in parsed_data:
-            raw_name = (
-                raw_item.get("original_name")
-                or raw_item.get("service_name_raw")
-                or raw_item.get("standardized_name")
-                or ""
-            ).strip()
-            if not raw_name:
-                continue
+                partner = get_or_create_partner(db, partner_name)
+                doc = PriceDocument(
+                    partner_id=partner.partner_id,
+                    file_name=inner_filename,
+                    file_format=detect_file_format(inner_filename, contents),
+                    effective_date=parsed_effective_date,
+                    parse_status="processing",
+                    raw_content=raw_text[:200_000],
+                )
+                db.add(doc)
+                db.flush()
 
-            service_code = raw_item.get("service_code") or raw_item.get("code")
-            normalized_name = raw_item.get("standardized_name") or raw_name
-            category_hint = raw_item.get("category")
-            ai_confidence = to_float(raw_item.get("confidence")) or 0
+                stored_path = UPLOAD_DIR / f"{doc.doc_id}_{safe_filename(inner_filename)}"
+                stored_path.write_bytes(contents)
+                doc.stored_path = str(stored_path)
 
-            price_resident = to_float(raw_item.get("price_resident_kzt"))
-            price_nonresident = to_float(raw_item.get("price_nonresident_kzt"))
-            price_main = to_float(raw_item.get("price"))
-            if price_resident is None:
-                price_resident = price_main
-            if price_main is None:
-                price_main = price_resident
+                created_count = 0
+                review_count = 0
+                response_items = []
 
-            currency = (raw_item.get("currency") or raw_item.get("currency_original") or "KZT").upper()
-            matched = match_service(db, normalized_name or raw_name, category_hint, service_code)
+                for raw_item in parsed_data:
+                    raw_name = (
+                        raw_item.get("original_name")
+                        or raw_item.get("service_name_raw")
+                        or raw_item.get("standardized_name")
+                        or ""
+                    ).strip()
+                    if not raw_name:
+                        continue
 
-            confidence = matched.confidence
-            if ai_confidence:
-                confidence = min(confidence or ai_confidence, ai_confidence)
+                    service_code = raw_item.get("service_code") or raw_item.get("code")
+                    normalized_name = raw_item.get("standardized_name") or raw_name
+                    category_hint = raw_item.get("category")
+                    ai_confidence = to_float(raw_item.get("confidence")) or 0
 
-            validation_notes = []
-            needs_review = matched.needs_review
-            if price_resident is None or price_resident <= 0:
-                needs_review = True
-                validation_notes.append("Цена не распознана или <= 0")
-            if price_nonresident is not None and price_resident is not None and price_nonresident < price_resident:
-                needs_review = True
-                validation_notes.append("Цена нерезидента ниже цены резидента")
-            if parsed_effective_date > date.today():
-                needs_review = True
-                validation_notes.append("Дата прайса в будущем")
+                    price_resident = to_float(raw_item.get("price_resident_kzt"))
+                    price_nonresident = to_float(raw_item.get("price_nonresident_kzt"))
+                    price_main = to_float(raw_item.get("price"))
+                    if price_resident is None:
+                        price_resident = price_main
+                    if price_main is None:
+                        price_main = price_resident
 
-            item = PriceItem(
-                doc_id=doc.doc_id,
-                partner_id=partner.partner_id,
-                service_id=matched.service.service_id if matched.service else None,
-                service_name_raw=raw_name,
-                service_code_source=str(service_code).strip() if service_code else None,
-                normalized_name=normalized_name,
-                match_confidence=confidence,
-                match_method=matched.method,
-                price_resident_kzt=price_resident,
-                price_nonresident_kzt=price_nonresident,
-                price_original=price_main,
-                currency_original=currency,
-                needs_review=needs_review,
-                verification_note="; ".join(validation_notes) if validation_notes else None,
-                effective_date=parsed_effective_date,
-            )
-            db.add(item)
-            db.flush()
-            response_items.append(item_to_response(item))
-            created_count += 1
-            review_count += 1 if needs_review else 0
+                    currency = (raw_item.get("currency") or raw_item.get("currency_original") or "KZT").upper()
+                    matched = match_service(db, normalized_name or raw_name, category_hint, service_code)
 
-        doc.parse_status = "needs_review" if review_count else "done"
-        doc.parse_log = f"Создано позиций: {created_count}; на ревью: {review_count}"
-        db.commit()
+                    confidence = matched.confidence
+                    if ai_confidence:
+                        confidence = min(confidence or ai_confidence, ai_confidence)
 
-        with JOBS_LOCK:
-            job = JOBS.get(job_id)
-            if job:
-                job["data"].extend(response_items[:50])
-        set_job_file(job_id, index, status=doc.parse_status, items=created_count, review_items=review_count, error=None)
+                    validation_notes = []
+                    needs_review = matched.needs_review
+                    if price_resident is None or price_resident <= 0:
+                        needs_review = True
+                        validation_notes.append("Цена не распознана или <= 0")
+                    if price_nonresident is not None and price_resident is not None and price_nonresident < price_resident:
+                        needs_review = True
+                        validation_notes.append("Цена нерезидента ниже цены резидента")
+                    if parsed_effective_date > date.today():
+                        needs_review = True
+                        validation_notes.append("Дата прайса в будущем")
+
+                    item = PriceItem(
+                        doc_id=doc.doc_id,
+                        partner_id=partner.partner_id,
+                        service_id=matched.service.service_id if matched.service else None,
+                        service_name_raw=raw_name,
+                        service_code_source=str(service_code).strip() if service_code else None,
+                        normalized_name=normalized_name,
+                        match_confidence=confidence,
+                        match_method=matched.method,
+                        price_resident_kzt=price_resident,
+                        price_nonresident_kzt=price_nonresident,
+                        price_original=price_main,
+                        currency_original=currency,
+                        needs_review=needs_review,
+                        verification_note="; ".join(validation_notes) if validation_notes else None,
+                        effective_date=parsed_effective_date,
+                    )
+                    db.add(item)
+                    db.flush()
+                    response_items.append(item_to_response(item))
+                    created_count += 1
+                    review_count += 1 if needs_review else 0
+
+                doc.parse_status = "needs_review" if review_count else "done"
+                doc.parse_log = f"Создано позиций: {created_count}; на ревью: {review_count}"
+                db.commit()
+
+            with JOBS_LOCK:
+                job = JOBS.get(job_id)
+                if job:
+                    job["data"].extend(response_items[:50])
+            set_job_file(job_id, index, status=doc.parse_status, items=created_count, review_items=review_count, error=None)
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     except Exception as exc:
-        db.rollback()
         set_job_file(job_id, index, status="error", error=str(exc), items=0, review_items=0)
-    finally:
-        db.close()
 
 
 def process_upload_job(job_id: str, file_payloads: list[dict], effective_date_text: str | None, groq_api_key: str) -> None:
@@ -470,6 +508,8 @@ async def upload_file_async(
 
 @app.post("/api/catalog/bootstrap")
 async def bootstrap_catalog(force: bool = False):
+    if active_jobs():
+        raise HTTPException(status_code=409, detail="Дождись завершения обработки файлов, потом обновляй справочник.")
     result = bootstrap_catalog_if_needed(force=force)
     if result.get("error"):
         raise HTTPException(status_code=500, detail=result)
@@ -478,11 +518,15 @@ async def bootstrap_catalog(force: bool = False):
 
 @app.post("/api/catalog/upload")
 async def upload_catalog(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    if active_jobs():
+        raise HTTPException(status_code=409, detail="Дождись завершения обработки файлов, потом импортируй справочник.")
     contents = await file.read()
     try:
-        result = import_service_catalog(db, file.filename, contents)
-        saved_path = persist_user_catalog(file.filename, contents)
-        return {"message": "Справочник услуг загружен", **result, "services": db.query(Service).count(), "catalog_source": str(saved_path)}
+        with DB_WRITE_LOCK:
+            result = import_service_catalog(db, file.filename, contents)
+            saved_path = persist_user_catalog(file.filename, contents)
+            services_count = db.query(Service).count()
+        return {"message": "Справочник услуг загружен", **result, "services": services_count, "catalog_source": str(saved_path)}
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Ошибка импорта справочника: {exc}")
@@ -490,12 +534,16 @@ async def upload_catalog(file: UploadFile = File(...), db: Session = Depends(get
 
 @app.post("/api/admin/clear-prices")
 async def clear_prices(db: Session = Depends(get_db)):
-    """Clear parsed price data while preserving the service catalog."""
+    running = active_jobs()
+    if running:
+        raise HTTPException(status_code=409, detail="Нельзя чистить базу, пока идёт обработка файлов. Дождись статуса “готово”.")
     try:
-        items = db.query(PriceItem).delete(synchronize_session=False)
-        docs = db.query(PriceDocument).delete(synchronize_session=False)
-        partners = db.query(Partner).delete(synchronize_session=False)
-        db.commit()
+        with DB_WRITE_LOCK:
+            items = db.query(PriceItem).delete(synchronize_session=False)
+            docs = db.query(PriceDocument).delete(synchronize_session=False)
+            partners = db.query(Partner).delete(synchronize_session=False)
+            db.commit()
+            services_count = db.query(Service).count()
         with JOBS_LOCK:
             JOBS.clear()
         for stored_file in UPLOAD_DIR.glob("*"):
@@ -509,22 +557,23 @@ async def clear_prices(db: Session = Depends(get_db)):
             "deleted_price_items": items,
             "deleted_documents": docs,
             "deleted_partners": partners,
-            "services": db.query(Service).count(),
+            "services": services_count,
         }
     except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Ошибка очистки базы: {exc}")
+        raise HTTPException(status_code=500, detail=f"Ошибка очистки базы: {type(exc).__name__}: {exc}")
 
 
 @app.post("/api/partners")
 async def upsert_partner(payload: PartnerUpdateRequest, db: Session = Depends(get_db)):
-    partner = get_or_create_partner(db, payload.name, city=payload.city)
-    partner.address = payload.address
-    partner.bin = payload.bin
-    partner.contact_email = payload.contact_email
-    partner.contact_phone = payload.contact_phone
-    db.commit()
-    db.refresh(partner)
+    with DB_WRITE_LOCK:
+        partner = get_or_create_partner(db, payload.name, city=payload.city)
+        partner.address = payload.address
+        partner.bin = payload.bin
+        partner.contact_email = payload.contact_email
+        partner.contact_phone = payload.contact_phone
+        db.commit()
+        db.refresh(partner)
     return partner
 
 
@@ -627,14 +676,15 @@ async def manual_match(payload: ManualMatchRequest, db: Session = Depends(get_db
     if not service:
         raise HTTPException(status_code=404, detail="Услуга справочника не найдена")
 
-    item.service_id = service.service_id
-    item.match_confidence = 100
-    item.match_method = "manual"
-    item.needs_review = False
-    item.is_verified = True
-    item.verification_note = payload.verification_note or "Подтверждено оператором"
-    db.commit()
-    db.refresh(item)
+    with DB_WRITE_LOCK:
+        item.service_id = service.service_id
+        item.match_confidence = 100
+        item.match_method = "manual"
+        item.needs_review = False
+        item.is_verified = True
+        item.verification_note = payload.verification_note or "Подтверждено оператором"
+        db.commit()
+        db.refresh(item)
     return item_to_response(item)
 
 
