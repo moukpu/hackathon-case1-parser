@@ -18,6 +18,7 @@ import backend.admin_job_control  # noqa: F401,E402
 import backend.job_persistence  # noqa: F401,E402
 import backend.upload_history  # noqa: F401,E402
 import backend.review_candidates  # noqa: F401,E402
+import backend.catalog_settings  # noqa: F401,E402
 import backend.db_info  # noqa: F401,E402
 
 
