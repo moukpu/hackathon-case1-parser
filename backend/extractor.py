@@ -1,6 +1,6 @@
 import io
-import os
 import zipfile
+from pathlib import PurePosixPath
 from typing import Iterable, Tuple
 
 import pandas as pd
@@ -27,18 +27,23 @@ def detect_file_format(filename: str, file_bytes: bytes | None = None) -> str:
 
 
 def iter_input_files(filename: str, file_bytes: bytes) -> Iterable[Tuple[str, bytes]]:
-    """Yield original file or files inside ZIP. Skips folders and unsupported hidden files."""
+    """Yield original file or files inside ZIP.
+
+    For ZIP files we keep the inner relative path, not just basename. This allows
+    the API to infer partner/clinic names from folders like `Clinic A/price.xlsx`.
+    """
     if filename.lower().endswith(".zip"):
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
             for info in archive.infolist():
                 if info.is_dir():
                     continue
-                inner_name = os.path.basename(info.filename)
-                if not inner_name or inner_name.startswith("."):
+                inner_path = str(PurePosixPath(info.filename.replace("\\", "/")))
+                basename = PurePosixPath(inner_path).name
+                if not basename or basename.startswith(".") or "__MACOSX" in inner_path:
                     continue
-                if not inner_name.lower().endswith(SUPPORTED_EXTENSIONS):
+                if not basename.lower().endswith(SUPPORTED_EXTENSIONS):
                     continue
-                yield inner_name, archive.read(info.filename)
+                yield inner_path, archive.read(info.filename)
     else:
         yield filename, file_bytes
 
