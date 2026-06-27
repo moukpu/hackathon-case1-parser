@@ -2,7 +2,7 @@ const $ = (id) => document.getElementById(id);
 let selectedReviewItemId = null;
 
 function esc(s) {
-  return String(s ?? '').replace(/[&<>\"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[m]));
+  return String(s ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
 }
 
 function money(v) {
@@ -96,7 +96,24 @@ $('priceForm').addEventListener('submit', async (e) => {
   }
 });
 
+function statusBadge(status) {
+  if (status === 'done') return '<span class="text-emerald-600 font-bold">done</span>';
+  if (status === 'needs_review') return '<span class="text-amber-600 font-bold">review</span>';
+  if (status === 'error') return '<span class="text-red-600 font-bold">error</span>';
+  return `<span class="text-slate-500 font-bold">${esc(status || '—')}</span>`;
+}
+
 function renderUpload(data) {
+  const docs = data.documents || [];
+  const docRows = docs.map(doc => `
+    <tr class="border-t border-slate-100 align-top">
+      <td class="px-4 py-3 font-medium">${esc(doc.clinic_name || '—')}</td>
+      <td class="px-4 py-3 max-w-xl break-all">${esc(doc.file_name || '—')}</td>
+      <td class="px-4 py-3">${statusBadge(doc.status)}</td>
+      <td class="px-4 py-3">${doc.items ?? 0}</td>
+      <td class="px-4 py-3 text-red-600 text-xs">${esc(doc.error || '')}</td>
+    </tr>`).join('');
+
   const rows = (data.data || []).slice(0, 200).map(item => `
     <tr class="border-t border-slate-100">
       <td class="px-4 py-3 font-medium">${esc(item.standardized_name || item.original_name)}</td>
@@ -105,14 +122,27 @@ function renderUpload(data) {
       <td class="px-4 py-3">${esc(item.confidence)}%</td>
       <td class="px-4 py-3">${item.needs_review ? '<span class="text-amber-600 font-bold">review</span>' : '<span class="text-emerald-600 font-bold">ok</span>'}</td>
     </tr>`).join('');
+
+  const partners = (data.partners_detected || []).join(', ');
+  const emptyHint = data.items_found === 0
+    ? '<div class="mb-4 p-4 rounded-2xl bg-amber-50 border border-amber-100 text-amber-800"><b>Найдено 0 услуг.</b> Смотри таблицу файлов ниже: там будет видно, какие файлы были сканом, где AI не вернул позиции или где формат не прочитался.</div>'
+    : '';
+
   $('uploadResult').innerHTML = `
-    <div class="grid md:grid-cols-3 gap-4 mb-4">
-      <div class="bg-white/80 border border-slate-100 rounded-2xl p-4"><b>Клиника:</b><br>${esc(data.clinic_name)}</div>
+    ${emptyHint}
+    <div class="grid md:grid-cols-4 gap-4 mb-4">
+      <div class="bg-white/80 border border-slate-100 rounded-2xl p-4"><b>Форма:</b><br>${esc(data.clinic_name)}</div>
       <div class="bg-white/80 border border-slate-100 rounded-2xl p-4"><b>Найдено:</b><br>${data.items_found}</div>
       <div class="bg-white/80 border border-slate-100 rounded-2xl p-4"><b>На ревью:</b><br>${data.needs_review}</div>
+      <div class="bg-white/80 border border-slate-100 rounded-2xl p-4"><b>Клиники в ZIP:</b><br><span class="text-xs">${esc(partners || '—')}</span></div>
+    </div>
+    <div class="mb-5 overflow-auto bg-white/80 rounded-2xl border border-slate-100">
+      <div class="px-4 py-3 font-bold">Отчёт по файлам внутри загрузки</div>
+      <table class="w-full text-sm"><thead><tr class="text-left text-slate-500"><th class="px-4 py-3">Клиника</th><th class="px-4 py-3">Файл</th><th class="px-4 py-3">Статус</th><th class="px-4 py-3">Услуг</th><th class="px-4 py-3">Ошибка</th></tr></thead><tbody>${docRows || '<tr><td class="p-4 text-slate-500" colspan="5">Нет отчёта</td></tr>'}</tbody></table>
     </div>
     <div class="overflow-auto bg-white/80 rounded-2xl border border-slate-100">
-      <table class="w-full text-sm"><thead><tr class="text-left text-slate-500"><th class="px-4 py-3">Услуга</th><th class="px-4 py-3">Цена</th><th class="px-4 py-3">Категория</th><th class="px-4 py-3">Match</th><th class="px-4 py-3">Статус</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="px-4 py-3 font-bold">Извлечённые позиции</div>
+      <table class="w-full text-sm"><thead><tr class="text-left text-slate-500"><th class="px-4 py-3">Услуга</th><th class="px-4 py-3">Цена</th><th class="px-4 py-3">Категория</th><th class="px-4 py-3">Match</th><th class="px-4 py-3">Статус</th></tr></thead><tbody>${rows || '<tr><td class="p-4 text-slate-500" colspan="5">Позиции не извлечены</td></tr>'}</tbody></table>
     </div>`;
 }
 
