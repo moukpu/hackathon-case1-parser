@@ -14,6 +14,7 @@ import backend.account_migrations  # noqa: F401,E402
 import backend.job_detail_patch  # noqa: F401,E402
 import backend.export_routes  # noqa: F401,E402
 import backend.job_state  # noqa: F401,E402
+import backend.admin_job_control  # noqa: F401,E402
 import backend.db_info  # noqa: F401,E402
 
 
