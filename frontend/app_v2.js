@@ -22,6 +22,41 @@ function esc(s) {
 function money(v) { return v == null ? '—' : Number(v).toLocaleString('ru-RU') + ' ₸'; }
 function yearFrom(v) { const m = String(v || '').match(/\b(20\d{2})\b/); return m ? m[1] : '—'; }
 function dash(v) { return (v === null || v === undefined || v === '') ? '—' : esc(v); }
+function percent(v) { return v === null || v === undefined || v === '' ? '—' : `${Number(v).toFixed(Number(v) % 1 ? 1 : 0)}%`; }
+
+function humanStatus(status) {
+  return {
+    pending: 'ожидает',
+    queued: 'в очереди',
+    processing: 'обработка',
+    done: 'готово',
+    needs_review: 'нужно проверить',
+    error: 'ошибка',
+    finished_with_errors: 'завершено с ошибками',
+    interrupted: 'обработка прервана',
+    cancelled: 'отменено',
+    unknown: 'неизвестно',
+  }[status] || String(status || 'неизвестно').replaceAll('_', ' ');
+}
+
+function humanReason(value) {
+  const text = String(value || '').toLowerCase();
+  if (!text || text === 'null' || text === 'undefined') return 'нужно проверить';
+  if (text.includes('подозрительно') || text.includes('низкая цена') || text.includes('low_price')) return 'подозрительно низкая цена';
+  if (text.includes('fuzzy_low_confidence') || text.includes('low_confidence')) return 'низкая уверенность';
+  if (text.includes('unmatched') || text.includes('no_match') || text.includes('no_catalog') || text.includes('no_choices')) return 'нет совпадения';
+  if (text.includes('needs_review')) return 'нужно проверить';
+  if (text === 'manual') return 'проверено вручную';
+  if (text === 'exact') return 'точное совпадение';
+  if (text === 'fuzzy') return 'похожее совпадение';
+  return String(value).replaceAll('_', ' ');
+}
+
+function humanError(value) {
+  const text = String(value || '').trim();
+  if (!text) return '—';
+  return humanReason(text).replace('обработка прервана', 'обработка была прервана');
+}
 
 async function api(url, options = {}) {
   const res = await fetch(url, options);
@@ -51,13 +86,13 @@ function applyRuntimeUiTweaks() {
   if (reviewPanel && !reviewPanel.dataset.simpleReview) {
     reviewPanel.dataset.simpleReview = '1';
     reviewPanel.innerHTML = `
-      <div class="panel-head"><div><h2 class="h1">Ревью</h2><p class="hint">Сомнительные строки: нет match, низкая уверенность или странная цена.</p></div><button id="loadReviewBtn" class="btn btn-soft">Обновить</button></div>
-      <div class="review-guide"><div class="review-step"><b>1. Выбери строку</b><span class="hint">Кликни по позиции в таблице.</span></div><div class="review-step"><b>2. Найди услугу</b><span class="hint">Название подставится в поиск.</span></div><div class="review-step"><b>3. Примени match</b><span class="hint">Позиция уйдёт из ревью.</span></div></div>
+      <div class="panel-head"><div><h2 class="h1">Ревью</h2><p class="hint">Сомнительные строки: нет совпадения, низкая уверенность или странная цена.</p></div><button id="loadReviewBtn" class="btn btn-soft">Обновить</button></div>
+      <div class="review-guide"><div class="review-step"><b>1. Выбери строку</b><span class="hint">Кликни по позиции в таблице.</span></div><div class="review-step"><b>2. Выбери кандидата</b><span class="hint">Система покажет лучшие варианты.</span></div><div class="review-step"><b>3. Примени совпадение</b><span class="hint">Позиция уйдёт из ревью.</span></div></div>
       <input id="reviewClinicFilter" class="input" placeholder="Фильтр по клинике, услуге или причине" style="margin-bottom:12px" />
       <input id="reviewMaxConfidence" type="hidden" value="" style="display:none" /><input id="reviewLowOnly" type="checkbox" style="display:none" />
       <div id="reviewSelected" class="review-selected hint">Позиция не выбрана.</div>
       <div class="review-match"><input id="reviewServiceSearch" class="input" placeholder="Услуга из справочника" /><button id="reviewServiceBtn" class="btn">Найти в справочнике</button></div>
-      <div class="review-apply"><select id="reviewServiceSelect" class="input"></select><button id="applyReviewMatchBtn" class="btn btn-primary">Применить match</button></div>
+      <div class="review-apply"><select id="reviewServiceSelect" class="input"></select><button id="applyReviewMatchBtn" class="btn btn-primary">Применить совпадение</button></div>
       <div id="reviewResult"></div>`;
   }
 
@@ -65,7 +100,7 @@ function applyRuntimeUiTweaks() {
   if (catalogPanel && !$('catalogPreviewList')) {
     catalogPanel.insertAdjacentHTML('beforeend', `
       <section class="catalog-preview">
-        <div class="catalog-preview-head"><div><h3 class="h1">Загруженный справочник</h3><p id="catalogPreviewSummary" class="hint">Показываю объединённый справочник из базы.</p></div><input id="catalogSearchInput" class="input" placeholder="Найти в справочнике" /><button id="refreshCatalogPreviewBtn" class="btn btn-soft">Обновить</button></div>
+        <div class="catalog-preview-head"><div><h3 class="h1">Загруженный справочник</h3><p id="catalogPreviewSummary" class="hint">Показываю справочник из базы.</p></div><input id="catalogSearchInput" class="input" placeholder="Найти в справочнике" /><button id="refreshCatalogPreviewBtn" class="btn btn-soft">Обновить</button></div>
         <div id="catalogPreviewList"></div>
       </section>`);
   }
@@ -93,9 +128,8 @@ function setFileHint(input, hintId) {
 }
 
 function statusBadge(status) {
-  const label = {queued:'ожидает', processing:'обработка', done:'готово', needs_review:'ревью', error:'ошибка', finished_with_errors:'ошибки'}[status] || status;
-  const cls = status === 'done' ? 'ok' : status === 'error' || status === 'finished_with_errors' ? 'bad' : 'warn';
-  return `<span class="badge ${cls}">${esc(label)}</span>`;
+  const cls = status === 'done' ? 'ok' : ['error', 'finished_with_errors', 'interrupted'].includes(status) ? 'bad' : 'warn';
+  return `<span class="badge ${cls}">${esc(humanStatus(status))}</span>`;
 }
 
 function renderJob(job, keepScroll = true) {
@@ -107,15 +141,15 @@ function renderJob(job, keepScroll = true) {
   const items = job.data || [];
   const progress = job.total_files ? Math.round((job.processed_files || 0) / job.total_files * 100) : 0;
   box.innerHTML = `
-    <div class="panel-head"><div><h2 class="h1">Статус обработки</h2><p class="hint">Job: ${esc(job.job_id)}</p></div>${statusBadge(job.status)}</div>
+    <div class="panel-head"><div><h2 class="h1">Статус обработки</h2><p class="hint">ID обработки: ${esc(job.job_id)}</p></div>${statusBadge(job.status)}</div>
     <div class="grid-3 job-metrics">
       <div class="metric"><div class="metric-label">Файлы</div><div class="metric-value">${job.processed_files || 0}/${job.total_files || 0}</div></div>
       <div class="metric"><div class="metric-label">Позиции</div><div class="metric-value">${job.items_found || 0}</div></div>
-      <div class="metric"><div class="metric-label">Ревью</div><div class="metric-value">${job.needs_review || 0}</div></div>
+      <div class="metric"><div class="metric-label">Проверка</div><div class="metric-value">${job.needs_review || 0}</div></div>
     </div>
     <div class="hint" style="margin-bottom:10px">Прогресс: ${progress}%</div>
-    <div class="table-wrap docs-table"><table class="table"><thead><tr><th>Файл</th><th>Клиника</th><th>Статус</th><th>Услуг</th><th>Ревью</th><th>Ошибка</th></tr></thead><tbody>${files.map(f => `<tr><td>${esc(f.file_name)}</td><td>${esc(f.clinic_name)}</td><td>${statusBadge(f.status)}</td><td>${f.items || 0}</td><td>${f.review_items || 0}</td><td>${esc(f.error || '—')}</td></tr>`).join('')}</tbody></table></div>
-    ${items.length ? `<div class="section-gap"></div><h3 class="h1">Первые извлечённые позиции</h3><div class="table-wrap items-table"><table class="table"><thead><tr><th>Клиника</th><th>Услуга</th><th>Цена</th><th>Match</th><th>Ревью</th></tr></thead><tbody>${items.map(i => `<tr><td>${esc(i.clinic_name)}</td><td>${esc(i.standardized_name || i.original_name)}</td><td>${money(i.price_resident_kzt)}</td><td>${i.confidence ?? '—'}%</td><td>${i.needs_review ? '<span class="badge warn">да</span>' : '<span class="badge ok">нет</span>'}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    <div class="table-wrap docs-table"><table class="table"><thead><tr><th>Файл</th><th>Клиника</th><th>Статус</th><th>Услуг</th><th>Проверка</th><th>Комментарий</th></tr></thead><tbody>${files.map(f => `<tr><td>${esc(f.file_name)}</td><td>${esc(f.clinic_name)}</td><td>${statusBadge(f.status)}</td><td>${f.items || 0}</td><td>${f.review_items || 0}</td><td>${esc(humanError(f.error))}</td></tr>`).join('')}</tbody></table></div>
+    ${items.length ? `<div class="section-gap"></div><h3 class="h1">Первые извлечённые позиции</h3><div class="table-wrap items-table"><table class="table"><thead><tr><th>Клиника</th><th>Услуга</th><th>Цена</th><th>Совпадение</th><th>Проверка</th></tr></thead><tbody>${items.map(i => `<tr><td>${esc(i.clinic_name)}</td><td>${esc(i.standardized_name || i.original_name)}</td><td>${money(i.price_resident_kzt)}</td><td>${percent(i.confidence)}</td><td>${i.needs_review ? '<span class="badge warn">нужно проверить</span>' : '<span class="badge ok">ок</span>'}</td></tr>`).join('')}</tbody></table></div>` : ''}
   `;
   if (keepScroll) box.scrollTop = scrollTop;
 }
@@ -130,7 +164,7 @@ async function pollJob(jobId) {
       refreshStats(); loadPartners(); loadUnmatched();
     }
   } catch (e) {
-    $('uploadResult').innerHTML += `<div class="card"><span class="badge bad">ошибка</span><div class="hint">${esc(e.message)}</div></div>`;
+    $('uploadResult').innerHTML += `<div class="card"><span class="badge bad">ошибка</span><div class="hint">${esc(humanError(e.message))}</div></div>`;
   }
 }
 
@@ -149,7 +183,7 @@ async function handleUpload(e) {
     renderJob(job, false);
     pollJob(job.job_id);
   } catch (err) {
-    $('uploadResult').innerHTML = `<div class="card"><span class="badge bad">ошибка</span><div class="hint">${esc(err.message)}</div></div>`;
+    $('uploadResult').innerHTML = `<div class="card"><span class="badge bad">ошибка</span><div class="hint">${esc(humanError(err.message))}</div></div>`;
   }
 }
 
@@ -159,17 +193,21 @@ async function refreshStats() {
     $('kpi').innerHTML = `
       <div class="metric"><div class="metric-label">Партнёры</div><div class="metric-value">${s.partners}</div></div>
       <div class="metric"><div class="metric-label">Позиции</div><div class="metric-value">${s.price_items}</div></div>
-      <div class="metric"><div class="metric-label">Match</div><div class="metric-value">${s.auto_normalization_percent}%</div></div>
+      <div class="metric"><div class="metric-label">Совпадение</div><div class="metric-value">${s.auto_normalization_percent}%</div></div>
       <div class="metric"><div class="metric-label">Справочник</div><div class="metric-value">${s.services}</div></div>
       <div class="metric"><div class="metric-label">Документы</div><div class="metric-value">${s.documents}</div></div>
-      <div class="metric"><div class="metric-label">Ревью</div><div class="metric-value">${s.needs_review}</div></div>`;
-  } catch (e) { if ($('kpi')) $('kpi').innerHTML = `<div class="card">${esc(e.message)}</div>`; }
+      <div class="metric"><div class="metric-label">Проверка</div><div class="metric-value">${s.needs_review}</div></div>`;
+  } catch (e) { if ($('kpi')) $('kpi').innerHTML = `<div class="card">${esc(humanError(e.message))}</div>`; }
 }
 
 async function bootstrapCatalog() {
   const target = $('catalogResult'); target.style.display = 'block'; target.innerHTML = '<div class="hint">Проверяю справочник...</div>';
-  try { const data = await api('/api/catalog/bootstrap', { method:'POST' }); target.innerHTML = `<div class="card"><span class="badge ok">готово</span><pre>${esc(JSON.stringify(data,null,2))}</pre></div>`; loadCatalogPreview(); }
-  catch(e){ target.innerHTML = `<div class="card"><span class="badge bad">ошибка</span><div class="hint">${esc(e.message)}</div></div>`; }
+  try {
+    const data = await api('/api/catalog/bootstrap', { method:'POST' });
+    target.innerHTML = `<div class="card"><span class="badge ok">готово</span><div style="margin-top:10px"><b>Справочник уже готов</b></div><div class="hint">${data.services || data.inserted || data.count || 0} услуг в базе.</div></div>`;
+    loadCatalogPreview();
+  }
+  catch(e){ target.innerHTML = `<div class="card"><span class="badge bad">ошибка</span><div class="hint">${esc(humanError(e.message))}</div></div>`; }
 }
 
 async function uploadCatalog(e) {
@@ -177,15 +215,19 @@ async function uploadCatalog(e) {
   if (!$('catalogFile')?.files?.length) return alert('Выбери файл справочника');
   const fd = new FormData(); fd.append('file', $('catalogFile').files[0]);
   const target = $('catalogResult'); target.style.display = 'block'; target.innerHTML = '<div class="hint">Импортирую...</div>';
-  try { const data = await api('/api/catalog/upload', { method:'POST', body:fd }); target.innerHTML = `<div class="card"><span class="badge ok">готово</span><pre>${esc(JSON.stringify(data,null,2))}</pre></div>`; refreshStats(); loadCatalogPreview(); }
-  catch(e){ target.innerHTML = `<div class="card"><span class="badge bad">ошибка</span><div class="hint">${esc(e.message)}</div></div>`; }
+  try {
+    const data = await api('/api/catalog/upload', { method:'POST', body:fd });
+    target.innerHTML = `<div class="card"><span class="badge ok">готово</span><div style="margin-top:10px"><b>Справочник загружен</b></div><div class="hint">${data.services || data.inserted || data.count || 0} услуг в базе.</div></div>`;
+    refreshStats(); loadCatalogPreview();
+  }
+  catch(e){ target.innerHTML = `<div class="card"><span class="badge bad">ошибка</span><div class="hint">${esc(humanError(e.message))}</div></div>`; }
 }
 
 async function loadPartners() {
   const list = $('partnersList'); if (!list) return;
   list.innerHTML = '<div class="hint" style="padding:16px">Загрузка...</div>';
   try { allPartners = await api('/api/partners?is_active=true'); renderPartners(); }
-  catch(e){ list.innerHTML = `<div class="hint" style="padding:16px">${esc(e.message)}</div>`; }
+  catch(e){ list.innerHTML = `<div class="hint" style="padding:16px">${esc(humanError(e.message))}</div>`; }
 }
 function renderPartners() {
   const q = $('partnerFilter')?.value || '';
@@ -200,8 +242,8 @@ async function selectPartner(id) {
   try {
     const items = await api(`/api/partners/${id}/services`);
     const partner = allPartners.find(p => p.partner_id === id);
-    box.innerHTML = `<div class="partner-detail-head"><h2 class="h1">${esc(partner?.name || 'Клиника')}</h2><p class="hint">${items.length} позиций</p></div><div class="table-wrap"><table class="table"><thead><tr><th>Услуга</th><th>Цена</th><th>Дата</th><th>Match</th><th>Ревью</th></tr></thead><tbody>${items.map(i => `<tr><td>${esc(i.standardized_name || i.original_name)}</td><td>${money(i.price_resident_kzt)}</td><td>${dash(i.effective_date)}</td><td>${i.confidence}%</td><td>${i.needs_review ? '<span class="badge warn">да</span>' : '<span class="badge ok">нет</span>'}</td></tr>`).join('')}</tbody></table></div>`;
-  } catch(e){ box.innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
+    box.innerHTML = `<div class="partner-detail-head"><h2 class="h1">${esc(partner?.name || 'Клиника')}</h2><p class="hint">${items.length} позиций</p></div><div class="table-wrap"><table class="table"><thead><tr><th>Услуга</th><th>Цена</th><th>Дата</th><th>Совпадение</th><th>Проверка</th></tr></thead><tbody>${items.map(i => `<tr><td>${esc(i.standardized_name || i.original_name)}</td><td>${money(i.price_resident_kzt)}</td><td>${dash(i.effective_date)}</td><td>${percent(i.confidence)}</td><td>${i.needs_review ? '<span class="badge warn">нужно проверить</span>' : '<span class="badge ok">ок</span>'}</td></tr>`).join('')}</tbody></table></div>`;
+  } catch(e){ box.innerHTML = `<div class="hint">${esc(humanError(e.message))}</div>`; }
 }
 
 async function doSearch() {
@@ -209,20 +251,20 @@ async function doSearch() {
   const box = $('searchResult'); box.innerHTML = '<div class="hint">Ищу...</div>';
   try {
     const data = await api(`/api/search?q=${encodeURIComponent(q)}`);
-    box.innerHTML = `<div class="grid-2"><div class="card"><b>Услуги в справочнике</b><div class="hint">${data.services.length} совпадений</div></div><div class="card"><b>Позиции прайсов</b><div class="hint">${data.prices.length} цен</div></div></div><div class="section-gap"></div><div class="table-wrap"><table class="table"><thead><tr><th>Клиника</th><th>Услуга</th><th>Цена</th><th>Дата</th><th>Match</th></tr></thead><tbody>${data.prices.map(i => `<tr><td>${esc(i.clinic_name)}</td><td>${esc(i.standardized_name || i.original_name)}</td><td>${money(i.price_resident_kzt)}</td><td>${dash(i.effective_date)}</td><td>${i.confidence}%</td></tr>`).join('')}</tbody></table></div>`;
-  } catch(e){ box.innerHTML = `<div class="card">${esc(e.message)}</div>`; }
+    box.innerHTML = `<div class="grid-2"><div class="card"><b>Услуги в справочнике</b><div class="hint">${data.services.length} совпадений</div></div><div class="card"><b>Позиции прайсов</b><div class="hint">${data.prices.length} цен</div></div></div><div class="section-gap"></div><div class="table-wrap"><table class="table"><thead><tr><th>Клиника</th><th>Услуга</th><th>Цена</th><th>Дата</th><th>Совпадение</th></tr></thead><tbody>${data.prices.map(i => `<tr><td>${esc(i.clinic_name)}</td><td>${esc(i.standardized_name || i.original_name)}</td><td>${money(i.price_resident_kzt)}</td><td>${dash(i.effective_date)}</td><td>${percent(i.confidence)}</td></tr>`).join('')}</tbody></table></div>`;
+  } catch(e){ box.innerHTML = `<div class="card">${esc(humanError(e.message))}</div>`; }
 }
 
 async function loadUnmatched() {
   const box = $('reviewResult'); if (!box) return;
   box.innerHTML = '<div class="hint">Загрузка ревью...</div>';
   try { lastReviewItems = await api('/api/unmatched'); renderReviewList(); }
-  catch(e){ box.innerHTML = `<div class="card">${esc(e.message)}</div>`; }
+  catch(e){ box.innerHTML = `<div class="card">${esc(humanError(e.message))}</div>`; }
 }
 function renderReviewList() {
   const q = $('reviewClinicFilter')?.value || '';
-  const rows = lastReviewItems.filter(i => ciMatch(q, i.clinic_name, i.original_name, i.standardized_name, i.note));
-  $('reviewResult').innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Клиника</th><th>Исходная строка</th><th>Цена</th><th>Match</th><th>Причина</th></tr></thead><tbody>${rows.map(i => `<tr class="review-row ${i.item_id===selectedReviewItemId?'selected':''}" data-item-id="${esc(i.item_id)}"><td>${esc(i.clinic_name)}</td><td>${esc(i.original_name)}</td><td>${money(i.price_resident_kzt)}</td><td>${i.confidence}%</td><td>${dash(i.note || i.match_method)}</td></tr>`).join('')}</tbody></table></div>`;
+  const rows = lastReviewItems.filter(i => ciMatch(q, i.clinic_name, i.original_name, i.standardized_name, i.note, i.match_method));
+  $('reviewResult').innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Клиника</th><th>Исходная строка</th><th>Цена</th><th>Совпадение</th><th>Причина</th></tr></thead><tbody>${rows.map(i => `<tr class="review-row ${i.item_id===selectedReviewItemId?'selected':''}" data-item-id="${esc(i.item_id)}"><td>${esc(i.clinic_name)}</td><td>${esc(i.original_name)}</td><td>${money(i.price_resident_kzt)}</td><td>${percent(i.confidence)}</td><td>${esc(humanReason(i.note || i.match_method))}</td></tr>`).join('')}</tbody></table></div>`;
   document.querySelectorAll('.review-row').forEach(row => row.addEventListener('click', () => selectReviewItem(row.dataset.itemId)));
 }
 function selectReviewItem(id) {
@@ -235,13 +277,13 @@ async function searchReviewServices() {
   const q = $('reviewServiceSearch')?.value?.trim(); if (!q) return;
   const select = $('reviewServiceSelect'); select.innerHTML = '<option>Ищу...</option>';
   try { const data = await api(`/api/services?q=${encodeURIComponent(q)}`); select.innerHTML = data.map(s => `<option value="${esc(s.service_id)}">${esc(s.service_name)}${s.category ? ' · ' + esc(s.category) : ''}</option>`).join('') || '<option value="">Нет совпадений</option>'; }
-  catch(e){ select.innerHTML = `<option>${esc(e.message)}</option>`; }
+  catch(e){ select.innerHTML = `<option>${esc(humanError(e.message))}</option>`; }
 }
 async function applyReviewMatch() {
   if (!selectedReviewItemId) return alert('Сначала выбери строку ревью');
   const serviceId = $('reviewServiceSelect')?.value; if (!serviceId) return alert('Выбери услугу');
   try { await api('/api/match', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({item_id:selectedReviewItemId, service_id:serviceId}) }); selectedReviewItemId=null; await loadUnmatched(); refreshStats(); }
-  catch(e){ alert(e.message); }
+  catch(e){ alert(humanError(e.message)); }
 }
 
 async function loadCatalogPreview() {
@@ -249,7 +291,7 @@ async function loadCatalogPreview() {
   const q = $('catalogSearchInput')?.value.trim() || '';
   box.innerHTML = '<div class="hint">Загрузка справочника...</div>';
   try { const data = await api('/api/services' + (q ? `?q=${encodeURIComponent(q)}` : '')); $('catalogPreviewSummary').textContent = `Показано ${data.length} услуг. Поиск работает по названию, коду и категории.`; box.innerHTML = `<div class="table-wrap catalog-services-table"><table class="table"><thead><tr><th>Код</th><th>Название</th><th>Категория</th><th>Тарификатор</th></tr></thead><tbody>${data.map(s => `<tr><td>${dash(s.source_code)}</td><td>${esc(s.service_name)}</td><td>${dash(s.category)}</td><td>${dash(s.tarificatr_code)}</td></tr>`).join('')}</tbody></table></div>`; }
-  catch(e){ box.innerHTML = `<div class="card">${esc(e.message)}</div>`; }
+  catch(e){ box.innerHTML = `<div class="card">${esc(humanError(e.message))}</div>`; }
 }
 
 function init() {
