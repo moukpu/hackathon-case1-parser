@@ -10,6 +10,7 @@ from openpyxl import Workbook
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from auth import AuthUser, require_user
 from backend.main import (
     JOBS,
     JOBS_LOCK,
@@ -20,27 +21,9 @@ from backend.main import (
 from db import Partner, PriceItem, get_db
 
 
-PRICE_EXPORT_COLUMNS = [
-    "Клиника",
-    "Услуга",
-    "Цена KZT",
-    "Категория",
-    "Match %",
-    "Ревью",
-    "Дата",
-]
-
+PRICE_EXPORT_COLUMNS = ["Клиника", "Услуга", "Цена KZT", "Категория", "Match %", "Ревью", "Дата"]
 REVIEW_EXPORT_COLUMNS = PRICE_EXPORT_COLUMNS + ["Причина"]
-
-JOB_DOC_COLUMNS = [
-    "Клиника",
-    "Файл",
-    "Статус",
-    "Услуг",
-    "Ревью",
-    "Ошибка",
-]
-
+JOB_DOC_COLUMNS = ["Клиника", "Файл", "Статус", "Услуг", "Ревью", "Ошибка"]
 SUPPORTED_EXPORT_FORMATS = {"csv", "xlsx"}
 
 
@@ -147,28 +130,34 @@ def export_rows(rows: list[dict], columns: list[str], filename: str, file_format
     return rows_to_csv_response(rows, columns, safe_name)
 
 
-def active_price_items(db: Session) -> Iterable[PriceItem]:
-    return db.query(PriceItem).filter(PriceItem.is_active == True).order_by(PriceItem.created_at.desc()).limit(20000).all()  # noqa: E712
+def active_price_items(db: Session, user_id: str) -> Iterable[PriceItem]:
+    return (
+        db.query(PriceItem)
+        .filter(PriceItem.user_id == user_id, PriceItem.is_active == True)  # noqa: E712
+        .order_by(PriceItem.created_at.desc())
+        .limit(20000)
+        .all()
+    )
 
 
 @app.get("/api/export/search.{file_format}")
-async def export_search(file_format: str, q: str, db: Session = Depends(get_db)):
+async def export_search(file_format: str, q: str, db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
     q = (q or "").strip()
     if not q:
         raise HTTPException(status_code=400, detail="Передай поисковый запрос q")
-    items = [item for item in active_price_items(db) if price_item_matches_query(item, q)][:5000]
+    items = [item for item in active_price_items(db, current_user.user_id) if price_item_matches_query(item, q)][:5000]
     rows = [price_item_to_export_row(item) for item in items]
     return export_rows(rows, PRICE_EXPORT_COLUMNS, f"search_{q}", file_format)
 
 
 @app.get("/api/export/partners/{partner_id}/services.{file_format}")
-async def export_partner_services(partner_id: str, file_format: str, db: Session = Depends(get_db)):
-    partner = db.query(Partner).filter(Partner.partner_id == partner_id).first()
+async def export_partner_services(partner_id: str, file_format: str, db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
+    partner = db.query(Partner).filter(Partner.user_id == current_user.user_id, Partner.partner_id == partner_id).first()
     if not partner:
         raise HTTPException(status_code=404, detail="Партнёр не найден")
     items = (
         db.query(PriceItem)
-        .filter(PriceItem.partner_id == partner_id, PriceItem.is_active == True)  # noqa: E712
+        .filter(PriceItem.user_id == current_user.user_id, PriceItem.partner_id == partner_id, PriceItem.is_active == True)  # noqa: E712
         .order_by(PriceItem.service_name_raw)
         .limit(20000)
         .all()
@@ -178,10 +167,10 @@ async def export_partner_services(partner_id: str, file_format: str, db: Session
 
 
 @app.get("/api/export/review.{file_format}")
-async def export_review(file_format: str, db: Session = Depends(get_db)):
+async def export_review(file_format: str, db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
     items = (
         db.query(PriceItem)
-        .filter(or_(PriceItem.service_id.is_(None), PriceItem.needs_review == True))  # noqa: E712
+        .filter(PriceItem.user_id == current_user.user_id, or_(PriceItem.service_id.is_(None), PriceItem.needs_review == True))  # noqa: E712
         .order_by(PriceItem.created_at.desc())
         .limit(20000)
         .all()
@@ -191,10 +180,10 @@ async def export_review(file_format: str, db: Session = Depends(get_db)):
 
 
 @app.get("/api/export/jobs/{job_id}.{file_format}")
-async def export_job(job_id: str, file_format: str):
+async def export_job(job_id: str, file_format: str, current_user: AuthUser = Depends(require_user)):
     with JOBS_LOCK:
         job = dict(JOBS.get(job_id) or {})
-    if not job:
+    if not job or job.get("user_id") != current_user.user_id:
         raise HTTPException(status_code=404, detail="Job не найден. Возможно, сервер перезапустился.")
 
     item_rows = [job_item_to_export_row(item) for item in job.get("data") or []]
