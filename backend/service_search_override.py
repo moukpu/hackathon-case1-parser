@@ -13,19 +13,17 @@ ALIASES = {
     "ecg": ["экг", "электрокардиография", "электрокардиограмма"],
     "ekg": ["экг", "электрокардиография", "электрокардиограмма"],
     "узи": ["ультразвуковое исследование", "ультразвуковая диагностика", "ультразвук"],
-    "мрт": ["магнитно резонансная томография", "магнитно-резонансная томография"],
+    "мрт": ["магнитно резонансная томография", "магнитно резонансный"],
     "кт": ["компьютерная томография"],
     "оак": ["общий анализ крови"],
     "оам": ["общий анализ мочи"],
-    "биохимия": ["биохимический анализ крови"],
-    "лфк": ["лечебная физкультура", "лечебная физическая культура"],
-    "эгдс": ["эзофагогастродуоденоскопия", "фгдс", "гастроскопия"],
     "фгдс": ["эзофагогастродуоденоскопия", "эгдс", "гастроскопия"],
+    "эгдс": ["эзофагогастродуоденоскопия", "фгдс", "гастроскопия"],
 }
 
 TRASH_WORDS = {
     "без", "лс", "ими", "имн", "процедура", "исследование", "услуга", "час", "часа",
-    "1", "2", "3", "4", "5", "один", "одна", "одно",
+    "1", "2", "3", "4", "5", "один", "одна", "одно", "и", "или", "для", "на", "по",
 }
 
 
@@ -35,54 +33,60 @@ def norm(value) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def terms(query: str) -> list[str]:
-    base = norm(query)
-    output = {base}
-    tokens = [t for t in base.split() if t and t not in TRASH_WORDS]
-    output.update(tokens)
-    for token in tokens:
-        for alias in ALIASES.get(token, []):
-            output.add(norm(alias))
-    for key, aliases in ALIASES.items():
-        if key in tokens:
-            output.add(norm(" ".join(aliases[:1])))
-    return [t for t in output if len(t) >= 2]
+def tokens(query: str) -> list[str]:
+    return [t for t in norm(query).split() if t and t not in TRASH_WORDS]
 
 
 def variants(service: Service) -> list[str]:
-    values = [
-        service.service_name,
-        service.category,
-        service.source_code,
-        service.tarificatr_code,
-        " ".join(service.synonyms),
-    ]
+    values = [service.service_name, service.category, service.source_code, service.tarificatr_code, " ".join(service.synonyms)]
     return [norm(v) for v in values if norm(v)]
 
 
+def alias_score(alias_key: str, service: Service) -> int:
+    targets = [alias_key, *ALIASES.get(alias_key, [])]
+    targets = [norm(t) for t in targets]
+    best = 0
+    for target in targets:
+        for value in variants(service):
+            if target == value:
+                best = max(best, 130)
+            elif target in value:
+                best = max(best, 120)
+            elif alias_key in value.split():
+                best = max(best, 125)
+    return best
+
+
 def score_service(service: Service, query: str) -> int:
-    qs = terms(query)
+    base = norm(query)
+    qs = tokens(query)
     vs = variants(service)
-    if not qs or not vs:
+    if not base or not vs:
         return 0
 
+    alias_keys = [t for t in qs if t in ALIASES]
+    if alias_keys:
+        # For short medical abbreviations do not fuzzy-match the whole catalog.
+        return max(alias_score(key, service) for key in alias_keys)
+
+    short_query = len(base) <= 4 or all(len(t) <= 4 for t in qs)
     best = 0
-    for q in qs:
-        for v in vs:
-            if q == v:
-                best = max(best, 120)
-            elif q in v:
-                best = max(best, 105 if len(q) <= 4 else 100)
-            elif v in q and len(v) >= 5:
-                best = max(best, 95)
-            else:
-                best = max(best, int(fuzz.WRatio(q, v)))
+    for value in vs:
+        if base == value:
+            best = max(best, 120)
+        elif base in value and len(base) >= 3:
+            best = max(best, 105)
+        elif value in base and len(value) >= 6:
+            best = max(best, 95)
+        elif not short_query:
+            best = max(best, int(fuzz.WRatio(base, value)))
     return best
 
 
 def patch_main_matcher() -> None:
     def service_matches_query(service: Service, query: str) -> bool:
-        return score_service(service, query) >= 55
+        threshold = 100 if any(t in ALIASES for t in tokens(query)) else 65
+        return score_service(service, query) >= threshold
 
     main.service_matches_query = service_matches_query
 
@@ -99,10 +103,13 @@ async def list_services_safe(category: str | None = None, q: str | None = None, 
         cat = norm(category)
         services = [s for s in services if cat in norm(s.category)]
     if q:
+        alias_mode = any(t in ALIASES for t in tokens(q))
+        threshold = 100 if alias_mode else 65
+        limit = 30 if alias_mode else 80
         ranked = [(score_service(s, q), s) for s in services]
-        ranked = [(score, s) for score, s in ranked if score >= 45]
+        ranked = [(score, s) for score, s in ranked if score >= threshold]
         ranked.sort(key=lambda item: (-item[0], norm(item[1].service_name)))
-        return [s for _, s in ranked[:120]]
+        return [s for _, s in ranked[:limit]]
     return services[:500]
 
 
