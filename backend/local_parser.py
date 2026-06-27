@@ -3,10 +3,24 @@ from typing import Any
 
 
 PRICE_RE = re.compile(r"(?<!\d)(\d{3,}(?:[\s\u00a0]\d{3})*(?:[,.]\d{1,2})?)(?!\d)")
+CODE_PREFIX_RE = re.compile(r"^\s*[A-ZА-Я]{1,6}\s*\d+(?:[.,]\d+)*(?:\s*[A-ZА-Я])?[.)\-\s,;:]+", re.I)
+TRAILING_COUNT_RE = re.compile(r"\s+\d{1,3}\s*$")
+MONTHS_RE = re.compile(r"\b(январ[ья]|феврал[ья]|март[а]?|апрел[ья]|ма[йя]|июн[ья]|июл[ья]|август[а]?|сентябр[ья]|октябр[ья]|ноябр[ья]|декабр[ья])\b", re.I)
+DATE_RE = re.compile(r"\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?\b")
+
 SKIP_WORDS = {
     "цена", "стоимость", "прайс", "наименование", "услуга", "код", "итого",
     "скидка", "примечание", "адрес", "телефон", "бин", "страница", "лист",
+    "приложение", "договор", "график", "таблица", "утвержден", "утверждено",
+    "от", "с", "по", "дата", "год", "января", "февраля", "марта", "апреля",
 }
+
+SERVICE_KEYWORDS = [
+    "прием", "приём", "консульта", "осмотр", "узи", "мрт", "кт", "рентген", "экг", "эхо",
+    "анализ", "кров", "моч", "мазок", "тест", "проб", "иммун", "терап", "диагност",
+    "спирометр", "спирограф", "монитор", "холтер", "фгдс", "колоно", "пункц", "биопс",
+    "инъек", "капель", "перевяз", "удал", "лечение", "анестез", "массаж", "забор",
+]
 
 
 def parse_price_number(value: str) -> float | None:
@@ -16,7 +30,6 @@ def parse_price_number(value: str) -> float | None:
     matches = PRICE_RE.findall(text)
     if not matches:
         return None
-    # Prefer the last large number in a row: usually the price column.
     raw = matches[-1].replace(" ", "").replace("\u00a0", "").replace(",", ".")
     try:
         price = float(raw)
@@ -27,13 +40,24 @@ def parse_price_number(value: str) -> float | None:
     return price
 
 
+def has_service_signal(text: str) -> bool:
+    n = (text or "").lower()
+    return any(k in n for k in SERVICE_KEYWORDS)
+
+
 def is_probably_header_or_noise(text: str) -> bool:
     normalized = re.sub(r"\s+", " ", (text or "").lower()).strip()
     if len(normalized) < 4:
         return True
     if normalized in SKIP_WORDS:
         return True
-    if sum(1 for w in SKIP_WORDS if w in normalized) >= 2 and not PRICE_RE.search(normalized):
+    if "приложение" in normalized or "утвержден" in normalized:
+        return True
+    if MONTHS_RE.search(normalized) and not has_service_signal(normalized):
+        return True
+    if DATE_RE.search(normalized) and not has_service_signal(normalized):
+        return True
+    if sum(1 for w in SKIP_WORDS if w in normalized) >= 2 and not has_service_signal(normalized):
         return True
     if re.fullmatch(r"[\d\W_]+", normalized):
         return True
@@ -43,22 +67,11 @@ def is_probably_header_or_noise(text: str) -> bool:
 def clean_service_name(value: str) -> str:
     text = str(value or "")
     text = re.sub(r"\s+", " ", text.replace("\u00a0", " ")).strip(" .,:;|-–—")
-    # Remove leading row numbers/codes but keep medical abbreviations.
+    text = CODE_PREFIX_RE.sub("", text).strip()
     text = re.sub(r"^\d+[.)\-\s]+", "", text).strip()
+    # Many source files have a trailing internal catalog/category number after the service name.
+    text = TRAILING_COUNT_RE.sub("", text).strip(" .,:;|-–—")
     return text
-
-
-def category_hint(name: str) -> str:
-    n = name.lower()
-    if any(x in n for x in ["узи", "мрт", "кт", "рентген", "эхо", "экг", "холтер", "фгдс", "колоноскоп"]):
-        return "диагностика"
-    if any(x in n for x in ["анализ", "кров", "моч", "пцр", "ифа", "оак", "оам", "ттг", "билирубин", "глюкоза"]):
-        return "лаборатория"
-    if any(x in n for x in ["прием", "приём", "консультац", "осмотр"]):
-        return "консультация"
-    if any(x in n for x in ["инъекц", "капель", "перевяз", "массаж", "забор", "удаление", "лечение"]):
-        return "процедура"
-    return "прочее"
 
 
 def row_to_item(cells: list[str]) -> dict[str, Any] | None:
@@ -78,11 +91,10 @@ def row_to_item(cells: list[str]) -> dict[str, Any] | None:
         return None
 
     name_candidates = []
-    for idx, cell in enumerate(cells[:price_idx]):
+    for cell in cells[:price_idx]:
         clean = clean_service_name(cell)
         if len(clean) >= 4 and not is_probably_header_or_noise(clean):
-            # Prefer longer text cells, not numeric codes.
-            score = len(clean) + (20 if re.search(r"[а-яa-z]", clean.lower()) else 0)
+            score = len(clean) + (30 if has_service_signal(clean) else 0)
             name_candidates.append((score, clean))
 
     if not name_candidates:
@@ -100,8 +112,8 @@ def row_to_item(cells: list[str]) -> dict[str, Any] | None:
         "price_resident_kzt": price_value,
         "price_nonresident_kzt": None,
         "currency": "KZT",
-        "category": category_hint(service_name),
-        "confidence": 78,
+        "category": None,
+        "confidence": 88 if has_service_signal(service_name) else 72,
     }
 
 
@@ -114,7 +126,6 @@ def line_to_item(line: str) -> dict[str, Any] | None:
     if price is None:
         return None
 
-    # Cut the last price occurrence from the end part.
     matches = list(PRICE_RE.finditer(line))
     if not matches:
         return None
@@ -132,16 +143,16 @@ def line_to_item(line: str) -> dict[str, Any] | None:
         "price_resident_kzt": price,
         "price_nonresident_kzt": None,
         "currency": "KZT",
-        "category": category_hint(name),
-        "confidence": 70,
+        "category": None,
+        "confidence": 84 if has_service_signal(name) else 70,
     }
 
 
-def parse_price_list_locally(raw_text: str, max_items: int = 500) -> list[dict[str, Any]]:
+def parse_price_list_locally(raw_text: str, max_items: int = 5000) -> list[dict[str, Any]]:
     """Fast deterministic parser for tables/text.
 
-    This avoids burning Groq quota on straightforward XLSX/CSV/DOCX/PDF tables.
-    Groq should be used only as fallback when this returns too few rows.
+    Max is high on purpose: hackathon ZIPs can contain huge price files. UI can
+    paginate/display a subset, but extraction should not silently cut at 500.
     """
     items: list[dict[str, Any]] = []
     seen: set[tuple[str, float]] = set()
