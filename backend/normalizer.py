@@ -13,14 +13,19 @@ from sqlalchemy.orm import Session
 from db import Service
 
 
-AUTO_MATCH_THRESHOLD = 85
-REVIEW_MATCH_THRESHOLD = 70
+AUTO_MATCH_THRESHOLD = 72
+REVIEW_MATCH_THRESHOLD = 55
+CODE_PREFIX_RE = re.compile(r"^\s*[A-ZА-Я]{1,6}\s*\d+(?:[.,]\d+)*(?:\s*[A-ZА-Я])?[.)\-\s,;:]+", re.I)
+TRAILING_COUNT_RE = re.compile(r"\s+\d{1,3}\s*$")
 
 
 def normalize_text(value: str | None) -> str:
     if not value:
         return ""
     value = str(value).lower().replace("ё", "е")
+    value = CODE_PREFIX_RE.sub("", value)
+    value = TRAILING_COUNT_RE.sub("", value)
+    value = re.sub(r"\b(цена|стоимость|тенге|тг|kzt|₸)\b", " ", value)
     value = re.sub(r"[^a-zа-я0-9]+", " ", value)
     return re.sub(r"\s+", " ", value).strip()
 
@@ -95,14 +100,12 @@ def import_service_catalog(db: Session, file_name: str, file_bytes: bytes) -> di
             skipped += 1
             continue
 
-        # Important: in the organizer catalog, generic ID is specialty/group id and repeats.
-        # The unique service code is the Code column. Do not use ID as source_code.
         source_code = clean_code(first_present(row, ["Code", "code", "service_code", "source_code", "Код", "Код услуги"]))
         if not source_code:
             source_code = clean_code(first_present(row, ["service_id", "serviceId", "serviceID"]))
 
         category = first_present(row, ["category", "Категория", "Специальность", "Specialty"])
-        tarificatr_code = clean_code(first_present(row, ["TarificatrCode", "tarificatr_code", "Тарификатор", "Код тарификатора"]));
+        tarificatr_code = clean_code(first_present(row, ["TarificatrCode", "tarificatr_code", "Тарификатор", "Код тарификатора"]))
         synonyms = parse_synonyms(first_present(row, ["synonyms", "Синонимы", "aliases", "Альтернативные названия"]))
 
         category = str(category).strip() if category else None
@@ -112,11 +115,7 @@ def import_service_catalog(db: Session, file_name: str, file_bytes: bytes) -> di
         if source_code:
             service = db.query(Service).filter(Service.source_code == source_code).first()
         if service is None:
-            service = (
-                db.query(Service)
-                .filter(Service.service_name == service_name, Service.category == category)
-                .first()
-            )
+            service = db.query(Service).filter(Service.service_name == service_name, Service.category == category).first()
 
         if service:
             service.service_name = service_name
@@ -161,7 +160,6 @@ def match_service(
 ) -> MatchResult:
     raw_name = (raw_name or "").strip()
     normalized_raw = normalize_text(raw_name)
-    normalized_category = normalize_text(category_hint)
 
     if not normalized_raw and not code_hint:
         return MatchResult(None, 0, "empty", True)
@@ -169,11 +167,7 @@ def match_service(
     if code_hint:
         code = clean_code(code_hint)
         if code:
-            service = (
-                db.query(Service)
-                .filter(or_(Service.source_code == code, Service.tarificatr_code == code))
-                .first()
-            )
+            service = db.query(Service).filter(or_(Service.source_code == code, Service.tarificatr_code == code)).first()
             if service:
                 return MatchResult(service, 100, "code_exact", False)
 
@@ -184,34 +178,34 @@ def match_service(
     for service in services:
         variants = [service.service_name, *service.synonyms]
         for variant in variants:
-            if normalized_raw == normalize_text(variant):
-                confidence = 98
-                if normalized_category and service.category:
-                    confidence = min(100, confidence + (2 if normalized_category == normalize_text(service.category) else -5))
-                return MatchResult(service, confidence, "exact_or_synonym", confidence < threshold)
+            normalized_variant = normalize_text(variant)
+            if normalized_raw == normalized_variant:
+                return MatchResult(service, 99, "exact_or_synonym", False)
+            if normalized_variant and normalized_variant in normalized_raw and len(normalized_variant) >= 8:
+                return MatchResult(service, 94, "contains_catalog_name", False)
+            if normalized_raw and normalized_raw in normalized_variant and len(normalized_raw) >= 8:
+                return MatchResult(service, 92, "contained_in_catalog_name", False)
 
     choices: dict[str, Service] = {}
     for service in services:
-        base = f"{service.service_name} {service.category or ''} {service.source_code or ''} {service.tarificatr_code or ''}"
-        normalized_base = normalize_text(base)
-        if normalized_base:
-            choices[normalized_base] = service
+        normalized_name = normalize_text(service.service_name)
+        if normalized_name:
+            choices[normalized_name] = service
         for synonym in service.synonyms:
-            normalized_synonym = normalize_text(f"{synonym} {service.category or ''}")
+            normalized_synonym = normalize_text(synonym)
             if normalized_synonym:
                 choices[normalized_synonym] = service
 
     if not choices:
         return MatchResult(None, 0, "no_choices", True)
 
-    best = process.extractOne(normalized_raw, list(choices.keys()), scorer=fuzz.token_sort_ratio)
+    # WRatio handles extra words better than token_sort_ratio for dirty price rows.
+    best = process.extractOne(normalized_raw, list(choices.keys()), scorer=fuzz.WRatio)
     if not best:
         return MatchResult(None, 0, "no_match", True)
 
     _, score, _ = best
     service = choices[best[0]]
-    if normalized_category and service.category and normalized_category == normalize_text(service.category):
-        score = min(100, score + 5)
 
     if score >= threshold:
         return MatchResult(service, float(score), "fuzzy", False)
