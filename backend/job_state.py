@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import Depends, Query
 
@@ -10,6 +11,7 @@ from backend import main
 JOB_STATE_PATH = (main.VOLUME_DIR if main.VOLUME_DIR.exists() else main.ROOT_DIR) / "jobs_state.json"
 ORIGINAL_SET_JOB = main.set_job
 ORIGINAL_SET_JOB_FILE = main.set_job_file
+RESUMABLE_DOC_STATUSES = {"pending", "queued", "processing"}
 
 
 def _dump_jobs_without_lock() -> None:
@@ -55,6 +57,33 @@ def _job_is_active(job: dict) -> bool:
     return job.get("status") in main.ACTIVE_JOB_STATUSES
 
 
+def _manifest_exists(job: dict) -> bool:
+    path = job.get("manifest_path")
+    return bool(path and Path(path).is_file())
+
+
+def _prepare_loaded_active_job(job: dict) -> None:
+    """On restart, keep resumable jobs active; safely stop legacy RAM-only jobs."""
+    if _manifest_exists(job):
+        job["status"] = "queued"
+        job["error"] = None
+        job["finished_at"] = None
+        job["resumable_after_restart"] = True
+        for doc in job.get("documents") or []:
+            if doc.get("status") in RESUMABLE_DOC_STATUSES:
+                doc["status"] = "pending"
+                doc["error"] = None
+        return
+
+    job["status"] = "interrupted"
+    job["error"] = "Сервер перезапустился во время обработки, исходные файлы job не найдены. Загрузи архив заново."
+    job["finished_at"] = job.get("finished_at") or datetime.utcnow().isoformat()
+    for doc in job.get("documents") or []:
+        if doc.get("status") in RESUMABLE_DOC_STATUSES:
+            doc["status"] = "interrupted"
+            doc["error"] = "Обработка прервана после рестарта сервера."
+
+
 def _public_job(job: dict) -> dict:
     copy = dict(job)
     copy.pop("user_id", None)
@@ -74,9 +103,7 @@ def load_jobs_state() -> None:
                 if not isinstance(job, dict) or not job.get("job_id"):
                     continue
                 if job.get("status") in main.ACTIVE_JOB_STATUSES:
-                    job["status"] = "interrupted"
-                    job["error"] = "Сервер перезапустился во время обработки. Загрузи архив заново."
-                    job["finished_at"] = job.get("finished_at") or datetime.utcnow().isoformat()
+                    _prepare_loaded_active_job(job)
                 main.JOBS[job["job_id"]] = job
     except Exception:
         pass
