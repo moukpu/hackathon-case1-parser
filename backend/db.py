@@ -19,6 +19,7 @@ from sqlalchemy import (
     event,
     text,
 )
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 
@@ -30,8 +31,19 @@ def default_sqlite_path() -> str:
     return os.path.join(os.path.dirname(__file__), "..", "prices.db")
 
 
+def normalize_database_url(raw_url: str) -> str:
+    """Keep SQLite fallback, but accept Railway/Postgres style URLs."""
+    url = (raw_url or "").strip()
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg2://" + url[len("postgres://"):]
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg2://" + url[len("postgresql://"):]
+    return url
+
+
 DB_PATH = os.getenv("DATABASE_PATH", default_sqlite_path())
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
+SQLALCHEMY_DATABASE_URL = normalize_database_url(os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}"))
+DATABASE_BACKEND = make_url(SQLALCHEMY_DATABASE_URL).get_backend_name()
 LOW_PRICE_REVIEW_THRESHOLD_KZT = float(os.getenv("LOW_PRICE_REVIEW_THRESHOLD_KZT", "1000"))
 SQLITE_BUSY_TIMEOUT_MS = int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "30000"))
 
