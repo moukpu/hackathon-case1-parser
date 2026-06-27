@@ -17,6 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     event,
+    text,
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
@@ -219,3 +220,85 @@ class ServicePrice(Base):
     category = Column(String, nullable=True)
     source_file = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+def _sqlite_table_exists(conn, table_name: str) -> bool:
+    row = conn.execute(
+        text("SELECT name FROM sqlite_master WHERE type='table' AND name=:name"),
+        {"name": table_name},
+    ).fetchone()
+    return row is not None
+
+
+def _sqlite_columns(conn, table_name: str) -> set[str]:
+    rows = conn.execute(text(f'PRAGMA table_info("{table_name}")')).fetchall()
+    return {row[1] for row in rows}
+
+
+def _add_missing_columns(conn, table_name: str, columns: dict[str, str]) -> None:
+    if not _sqlite_table_exists(conn, table_name):
+        return
+    existing = _sqlite_columns(conn, table_name)
+    for name, ddl in columns.items():
+        if name not in existing:
+            conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN {name} {ddl}'))
+
+
+def run_sqlite_migrations() -> None:
+    """Tiny compatibility migrations for old Railway SQLite volumes.
+
+    SQLAlchemy create_all() creates new tables, but it does not add columns to
+    existing tables. Railway Volume keeps the old prices.db, so we patch missing
+    columns here without deleting user data.
+    """
+    if not SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        _add_missing_columns(conn, "partners", {
+            "city": "VARCHAR",
+            "address": "VARCHAR",
+            "bin": "VARCHAR(12)",
+            "contact_email": "VARCHAR",
+            "contact_phone": "VARCHAR",
+            "is_active": "BOOLEAN DEFAULT 1",
+            "created_at": "DATETIME",
+            "updated_at": "DATETIME",
+        })
+        _add_missing_columns(conn, "services", {
+            "source_code": "VARCHAR",
+            "synonyms_json": "TEXT DEFAULT '[]'",
+            "category": "VARCHAR",
+            "icd_code": "VARCHAR",
+            "tarificatr_code": "VARCHAR",
+            "is_active": "BOOLEAN DEFAULT 1",
+            "created_at": "DATETIME",
+            "updated_at": "DATETIME",
+        })
+        _add_missing_columns(conn, "price_documents", {
+            "file_format": "VARCHAR",
+            "effective_date": "DATE",
+            "parsed_at": "DATETIME",
+            "parse_status": "VARCHAR DEFAULT 'done'",
+            "parse_log": "TEXT",
+            "raw_content": "TEXT",
+            "stored_path": "VARCHAR",
+        })
+        _add_missing_columns(conn, "price_items", {
+            "service_code_source": "VARCHAR",
+            "normalized_name": "TEXT",
+            "match_confidence": "FLOAT DEFAULT 0",
+            "match_method": "VARCHAR",
+            "price_nonresident_kzt": "FLOAT",
+            "price_original": "FLOAT",
+            "currency_original": "VARCHAR DEFAULT 'KZT'",
+            "needs_review": "BOOLEAN DEFAULT 0",
+            "is_verified": "BOOLEAN DEFAULT 0",
+            "verification_note": "TEXT",
+            "effective_date": "DATE",
+            "is_active": "BOOLEAN DEFAULT 1",
+            "created_at": "DATETIME",
+            "updated_at": "DATETIME",
+        })
+
+
+run_sqlite_migrations()
