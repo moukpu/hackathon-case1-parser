@@ -34,6 +34,21 @@ function formatHistoryDate(value) {
   return d.toLocaleString('ru-RU', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' });
 }
 
+function uiStatusLabel(status, label) {
+  if (label && !String(label).includes('_')) return label;
+  return {
+    pending: 'ожидает',
+    queued: 'в очереди',
+    processing: 'обработка',
+    done: 'готово',
+    needs_review: 'нужно проверить',
+    error: 'ошибка',
+    finished_with_errors: 'завершено с ошибками',
+    interrupted: 'обработка прервана',
+    cancelled: 'отменено',
+  }[status] || String(label || status || 'неизвестно').replaceAll('_', ' ');
+}
+
 clearBtn?.addEventListener('click', async () => {
   if (currentUploadLooksActive()) {
     if (clearResult) {
@@ -42,7 +57,7 @@ clearBtn?.addEventListener('click', async () => {
     return;
   }
 
-  const ok = confirm('Очистить загруженные прайсы, документы, партнёров и jobs? Справочник услуг останется.');
+  const ok = confirm('Очистить загруженные прайсы, документы, партнёров и историю обработок? Справочник услуг останется.');
   if (!ok) return;
 
   clearBtn.disabled = true;
@@ -54,7 +69,7 @@ clearBtn?.addEventListener('click', async () => {
     const res = await fetch('/api/admin/clear-prices', { method: 'POST' });
     const data = await readResponseSafely(res);
     if (!res.ok) {
-      const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || data);
+      const detail = typeof data.detail === 'string' ? data.detail : 'Не удалось очистить прайсы';
       throw new Error(detail || `HTTP ${res.status}`);
     }
 
@@ -72,7 +87,7 @@ clearBtn?.addEventListener('click', async () => {
     }
   } catch (e) {
     if (clearResult) {
-      clearResult.innerHTML = `<div class="card"><span class="badge bad">ошибка</span><div class="hint" style="margin-top:10px">${String(e.message || e)}</div></div>`;
+      clearResult.innerHTML = `<div class="card"><span class="badge bad">ошибка</span><div class="hint" style="margin-top:10px">${uiEsc(e.message || e)}</div></div>`;
     }
   } finally {
     clearBtn.disabled = false;
@@ -250,7 +265,7 @@ async function restoreLatestJob() {
 
 function historyBadge(status, label) {
   const cls = status === 'done' ? 'ok' : (status === 'error' || status === 'finished_with_errors' || status === 'interrupted') ? 'bad' : 'warn';
-  return `<span class="badge ${cls}">${uiEsc(label || status)}</span>`;
+  return `<span class="badge ${cls}">${uiEsc(uiStatusLabel(status, label))}</span>`;
 }
 
 function ensureUploadHistoryPanel() {
@@ -275,7 +290,7 @@ async function loadUploadHistory() {
       box.innerHTML = '<div class="hint">История пока пустая. Загрузи первый прайс.</div>';
       return;
     }
-    box.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Дата</th><th>Клиника</th><th>Файлы</th><th>Услуг</th><th>Ревью</th><th>Статус</th><th>Экспорт</th></tr></thead><tbody>${rows.map(row => {
+    box.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Дата</th><th>Клиника</th><th>Файлы</th><th>Услуг</th><th>Проверка</th><th>Статус</th><th>Экспорт</th></tr></thead><tbody>${rows.map(row => {
       const files = (row.files || []).slice(0, 3).map(f => uiEsc(f.file_name)).join('<br/>');
       const more = (row.files || []).length > 3 ? `<div class="history-muted">+${(row.files || []).length - 3} ещё</div>` : '';
       const actions = row.exportable && row.job_id ? `<div class="history-actions"><button class="btn btn-soft" data-export-job="${uiEsc(row.job_id)}" data-format="csv">CSV</button><button class="btn btn-soft" data-export-job="${uiEsc(row.job_id)}" data-format="xlsx">XLSX</button></div>` : '<span class="history-muted">старый импорт</span>';
