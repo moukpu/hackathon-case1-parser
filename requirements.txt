@@ -5,4 +5,7 @@ sqlalchemy
 pdfplumber
 pandas
 openpyxl
+xlrd
+python-docx
+rapidfuzz
 groq
