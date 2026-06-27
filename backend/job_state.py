@@ -1,8 +1,9 @@
 import json
 from datetime import datetime
 
-from fastapi import Query
+from fastapi import Depends, Query
 
+from auth import AuthUser, require_user
 from backend import main
 
 
@@ -30,7 +31,8 @@ def _job_is_active(job: dict) -> bool:
 
 def _public_job(job: dict) -> dict:
     copy = dict(job)
-    copy["is_active"] = _job_is_active(copy)
+    copy.pop("user_id", None)
+    copy["is_active"] = _job_is_active(job)
     return copy
 
 
@@ -80,9 +82,9 @@ main.set_job_file = patched_set_job_file
 
 
 @main.app.get("/api/jobs")
-async def list_jobs(status: str | None = Query(None), limit: int = Query(10, ge=1, le=50)):
+async def list_jobs(status: str | None = Query(None), limit: int = Query(10, ge=1, le=50), current_user: AuthUser = Depends(require_user)):
     with main.JOBS_LOCK:
-        jobs = list(main.JOBS.values())
+        jobs = [job for job in main.JOBS.values() if job.get("user_id") == current_user.user_id]
     jobs.sort(key=lambda j: j.get("created_at") or "", reverse=True)
     if status == "active":
         jobs = [job for job in jobs if _job_is_active(job)]
@@ -90,9 +92,9 @@ async def list_jobs(status: str | None = Query(None), limit: int = Query(10, ge=
 
 
 @main.app.get("/api/jobs-latest")
-async def latest_job():
+async def latest_job(current_user: AuthUser = Depends(require_user)):
     with main.JOBS_LOCK:
-        jobs = list(main.JOBS.values())
+        jobs = [job for job in main.JOBS.values() if job.get("user_id") == current_user.user_id]
     jobs.sort(key=lambda j: j.get("created_at") or "", reverse=True)
     active = next((job for job in jobs if _job_is_active(job)), None)
     if active:
