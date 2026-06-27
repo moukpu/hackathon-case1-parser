@@ -10,14 +10,17 @@ def run_account_migrations() -> None:
 
     with engine.begin() as conn:
         # Old schema made partner names globally unique. Accounts need the same
-        # clinic name to exist under different users.
+        # clinic name to exist under different users. Some deployments created it
+        # as a constraint, others as an index, so remove both possible forms.
         conn.execute(text('ALTER TABLE "partners" DROP CONSTRAINT IF EXISTS partners_name_key'))
+        conn.execute(text('ALTER TABLE "partners" DROP CONSTRAINT IF EXISTS ix_partners_name'))
         conn.execute(text('DROP INDEX IF EXISTS "ix_partners_name"'))
 
         # Old schema made service source codes globally unique. Catalogs are now
         # stored per account, so the same code can exist under different users.
         conn.execute(text('ALTER TABLE "services" DROP CONSTRAINT IF EXISTS services_source_code_key'))
         conn.execute(text('ALTER TABLE "services" DROP CONSTRAINT IF EXISTS uq_services_source_code'))
+        conn.execute(text('ALTER TABLE "services" DROP CONSTRAINT IF EXISTS ix_services_source_code'))
         conn.execute(text('DROP INDEX IF EXISTS "ix_services_source_code"'))
 
         # Recreate normal non-unique lookup indexes that may have been dropped.
