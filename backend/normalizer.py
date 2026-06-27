@@ -87,19 +87,17 @@ def dataframe_from_catalog(file_name: str, file_bytes: bytes) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
-def import_service_catalog(db: Session, file_name: str, file_bytes: bytes) -> dict[str, int]:
-    """Import catalog with minimal SQLite lock time.
-
-    Older version queried inside the row loop. SQLAlchemy autoflush could start a
-    write transaction before each SELECT and hold SQLite locked for a long time.
-    This version loads existing services once, updates in memory, then commits once.
-    """
+def import_service_catalog(db: Session, file_name: str, file_bytes: bytes, user_id: str | None = None) -> dict[str, int]:
+    """Import catalog for one account with minimal lock time."""
     df = dataframe_from_catalog(file_name, file_bytes).fillna("")
     created = 0
     updated = 0
     skipped = 0
 
-    existing = db.query(Service).all()
+    existing_query = db.query(Service)
+    if user_id is not None:
+        existing_query = existing_query.filter(Service.user_id == user_id)
+    existing = existing_query.all()
     by_code: dict[str, Service] = {}
     by_name_category: dict[tuple[str, str], Service] = {}
     for service in existing:
@@ -134,6 +132,7 @@ def import_service_catalog(db: Session, file_name: str, file_bytes: bytes) -> di
             service.service_name = service_name
             service.category = category
             service.tarificatr_code = tarificatr_code
+            service.user_id = user_id
             if source_code:
                 service.source_code = source_code
                 by_code[source_code] = service
@@ -144,6 +143,7 @@ def import_service_catalog(db: Session, file_name: str, file_bytes: bytes) -> di
         else:
             service = Service(
                 service_id=str(uuid.uuid4()),
+                user_id=user_id,
                 source_code=source_code,
                 service_name=service_name,
                 category=category,
@@ -175,6 +175,7 @@ def match_service(
     category_hint: str | None = None,
     code_hint: str | None = None,
     threshold: int = AUTO_MATCH_THRESHOLD,
+    user_id: str | None = None,
 ) -> MatchResult:
     raw_name = (raw_name or "").strip()
     normalized_raw = normalize_text(raw_name)
@@ -185,11 +186,17 @@ def match_service(
     if code_hint:
         code = clean_code(code_hint)
         if code:
-            service = db.query(Service).filter(or_(Service.source_code == code, Service.tarificatr_code == code)).first()
+            service_query = db.query(Service).filter(or_(Service.source_code == code, Service.tarificatr_code == code))
+            if user_id is not None:
+                service_query = service_query.filter(Service.user_id == user_id)
+            service = service_query.first()
             if service:
                 return MatchResult(service, 100, "code_exact", False)
 
-    services = db.query(Service).filter(Service.is_active == True).all()  # noqa: E712
+    services_query = db.query(Service).filter(Service.is_active == True)  # noqa: E712
+    if user_id is not None:
+        services_query = services_query.filter(Service.user_id == user_id)
+    services = services_query.all()
     if not services:
         return MatchResult(None, 0, "no_catalog", True)
 
