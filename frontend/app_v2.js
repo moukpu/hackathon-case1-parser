@@ -5,6 +5,15 @@ let allPartners = [];
 let selectedPartnerId = null;
 let lastReviewItems = [];
 
+const pageMeta = {
+  upload: ['Прайсы', 'Загрузка архивов и контроль обработки.'],
+  partners: ['Партнёры', 'Клиники из загруженных прайсов.'],
+  search: ['Поиск', 'Поиск цен по позициям партнёров.'],
+  review: ['Ревью', 'Очередь ручной проверки.'],
+  stats: ['Статистика', 'Состояние базы.'],
+  catalog: ['Справочник', 'Импорт и автозагрузка справочника услуг.'],
+};
+
 function esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
 }
@@ -23,6 +32,8 @@ async function api(url, options = {}) {
 function activateTab(name) {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('tab-active', b.dataset.tab === name));
   document.querySelectorAll('.tab-panel').forEach(p => p.hidden = p.id !== name);
+  if ($('pageTitle')) $('pageTitle').textContent = pageMeta[name]?.[0] || name;
+  if ($('pageNote')) $('pageNote').textContent = pageMeta[name]?.[1] || '';
   if (name === 'stats') refreshStats();
   if (name === 'partners') loadPartners();
   if (name === 'review') loadUnmatched();
@@ -30,14 +41,14 @@ function activateTab(name) {
 document.querySelectorAll('.tab').forEach(btn => btn.addEventListener('click', () => activateTab(btn.dataset.tab)));
 
 function badge(status) {
-  if (status === 'done') return '<span class="badge ok">done</span>';
-  if (status === 'needs_review') return '<span class="badge warn">has review</span>';
-  if (status === 'processing') return '<span class="badge warn">processing</span>';
-  if (status === 'pending') return '<span class="badge">pending</span>';
-  if (status === 'error') return '<span class="badge bad">error</span>';
+  if (status === 'done') return '<span class="badge ok">готово</span>';
+  if (status === 'needs_review') return '<span class="badge warn">ревью</span>';
+  if (status === 'processing') return '<span class="badge warn">обработка</span>';
+  if (status === 'pending') return '<span class="badge">ожидает</span>';
+  if (status === 'error') return '<span class="badge bad">ошибка</span>';
   return `<span class="badge">${esc(status || '—')}</span>`;
 }
-function itemStatus(item) { return item.needs_review ? '<span class="badge warn">review</span>' : '<span class="badge ok">ok</span>'; }
+function itemStatus(item) { return item.needs_review ? '<span class="badge warn">ревью</span>' : '<span class="badge ok">ok</span>'; }
 function table(headers, rows, empty = 'Ничего') {
   return `<div class="table-wrap"><table class="table"><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows || `<tr><td colspan="${headers.length}" class="muted">${esc(empty)}</td></tr>`}</tbody></table></div>`;
 }
@@ -55,18 +66,19 @@ function setupDrop() {
   if (!input || !hint || !drop) return;
   const refreshHint = () => {
     const files = Array.from(input.files || []);
-    hint.textContent = files.length ? files.map(f => f.name).join(' · ') : 'Нажми сюда или перетащи ZIP/PDF/DOCX/XLSX/XLS';
+    hint.textContent = files.length ? files.map(f => f.name).join(' · ') : 'ZIP, PDF, DOCX, XLSX, XLS';
   };
   input.addEventListener('change', refreshHint);
   ['dragenter','dragover'].forEach(evt => drop.addEventListener(evt, e => { e.preventDefault(); drop.style.borderColor = '#4f46e5'; }));
-  ['dragleave','drop'].forEach(evt => drop.addEventListener(evt, e => { e.preventDefault(); drop.style.borderColor = '#c7d2fe'; }));
+  ['dragleave','drop'].forEach(evt => drop.addEventListener(evt, e => { e.preventDefault(); drop.style.borderColor = '#b7bdd0'; }));
   drop.addEventListener('drop', e => { input.files = e.dataTransfer.files; input.dispatchEvent(new Event('change')); });
 }
 
 $('priceForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (currentJobTimer) clearInterval(currentJobTimer);
-  $('uploadResult').innerHTML = '<div class="card"><b>Загрузка принята.</b><div class="hint">Создаю очередь файлов...</div></div>';
+  $('uploadResult').style.display = 'block';
+  $('uploadResult').innerHTML = '<div class="muted"><b>Файлы приняты.</b> Создаю очередь...</div>';
   const fd = new FormData();
   fd.append('clinic_name', 'Auto');
   Array.from($('priceFiles').files).forEach(f => fd.append('files', f));
@@ -74,7 +86,7 @@ $('priceForm')?.addEventListener('submit', async (e) => {
     const job = await api('/api/upload-async', { method: 'POST', body: fd });
     renderJob(job);
     pollJob(job.job_id);
-  } catch(e) { $('uploadResult').innerHTML = `<div class="card bad">${esc(e.message)}</div>`; }
+  } catch(e) { $('uploadResult').innerHTML = `<div class="bad">${esc(e.message)}</div>`; }
 });
 
 async function pollJob(jobId) {
@@ -89,12 +101,13 @@ async function pollJob(jobId) {
       }
     } catch(e) {
       clearInterval(currentJobTimer);
-      $('uploadResult').insertAdjacentHTML('afterbegin', `<div class="card bad">${esc(e.message)}</div>`);
+      $('uploadResult').insertAdjacentHTML('afterbegin', `<div class="bad">${esc(e.message)}</div>`);
     }
   }, 2000);
 }
 
 function renderJob(job) {
+  $('uploadResult').style.display = 'block';
   const docs = job.documents || [];
   const docRows = docs.map(doc => `<tr><td><b>${esc(doc.clinic_name || '—')}</b></td><td>${esc(yearFrom(doc.file_name))}</td><td>${esc(doc.file_name || '—')}</td><td>${badge(doc.status)}</td><td>${doc.items ?? 0}</td><td><b>${doc.review_items ?? 0}</b></td><td class="bad">${esc(doc.error || '')}</td></tr>`).join('');
   const items = [], seen = new Set();
@@ -106,12 +119,12 @@ function renderJob(job) {
     if (items.length >= 200) break;
   }
   const itemRows = items.map(item => `<tr><td><b>${esc(item.clinic_name || '—')}</b></td><td>${esc(item.standardized_name || item.original_name)}</td><td>${money(item.price)}</td><td>${esc(item.category || '—')}</td><td>${esc(item.confidence)}%</td><td>${itemStatus(item)}</td></tr>`).join('');
-  $('uploadResult').innerHTML = `<div class="grid-3" style="margin-bottom:14px"><div class="metric"><div class="metric-label">Статус</div><div style="margin-top:10px">${badge(job.status)}</div></div><div class="metric"><div class="metric-label">Файлы</div><div class="metric-value" style="font-size:22px">${job.processed_files || 0}/${job.total_files || 0}</div></div><div class="metric"><div class="metric-label">Позиции / ревью</div><div class="metric-value" style="font-size:22px">${job.items_found || 0} / ${job.needs_review || 0}</div></div></div>${table(['Клиника','Год','Файл','Статус','Услуг','Ревью','Ошибка'], docRows, 'Нет файлов')}<div style="height:14px"></div>${table(['Клиника','Услуга','Цена','Категория','Match','Статус'], itemRows, 'Позиции пока не извлечены')}`;
+  $('uploadResult').innerHTML = `<div class="grid-3" style="margin-bottom:12px"><div class="metric"><div class="metric-label">Статус</div><div style="margin-top:8px">${badge(job.status)}</div></div><div class="metric"><div class="metric-label">Файлы</div><div class="metric-value">${job.processed_files || 0}/${job.total_files || 0}</div></div><div class="metric"><div class="metric-label">Позиции / ревью</div><div class="metric-value">${job.items_found || 0} / ${job.needs_review || 0}</div></div></div>${table(['Клиника','Год','Файл','Статус','Услуг','Ревью','Ошибка'], docRows, 'Нет файлов')}<div class="section-gap"></div>${table(['Клиника','Услуга','Цена','Категория','Match','Статус'], itemRows, 'Позиции пока не извлечены')}`;
 }
 
 async function loadPartners() {
   try { allPartners = await api('/api/partners'); renderPartners(); }
-  catch(e) { $('partnersList').innerHTML = `<div class="card bad">${esc(e.message)}</div>`; }
+  catch(e) { $('partnersList').innerHTML = `<div class="bad">${esc(e.message)}</div>`; }
 }
 function renderPartners() {
   const filter = ($('partnerFilter')?.value || '').toLowerCase();
@@ -127,8 +140,8 @@ async function selectPartner(partnerId) {
   try {
     const items = await api('/api/partners/' + encodeURIComponent(partnerId) + '/services');
     const rows = items.map(i => `<tr><td>${esc(i.standardized_name || i.original_name)}</td><td>${money(i.price)}</td><td>${esc(i.category || '—')}</td><td>${esc(i.confidence)}%</td><td>${itemStatus(i)}</td><td>${esc(i.effective_date || '—')}</td></tr>`).join('');
-    $('partnerDetails').innerHTML = `<div class="panel-head" style="margin-bottom:12px"><div><div class="h1" style="font-size:22px">${esc(partner?.name || 'Клиника')}</div><div class="hint">${items.length} позиций</div></div></div>${table(['Услуга','Цена','Категория','Match','Статус','Дата'], rows, 'У этой клиники пока нет услуг')}`;
-  } catch(e) { $('partnerDetails').innerHTML = `<div class="card bad">${esc(e.message)}</div>`; }
+    $('partnerDetails').innerHTML = `<div class="panel-head" style="margin-bottom:10px"><div><div class="h1" style="font-size:20px">${esc(partner?.name || 'Клиника')}</div><div class="hint">${items.length} позиций</div></div></div>${table(['Услуга','Цена','Категория','Match','Статус','Дата'], rows, 'У этой клиники пока нет услуг')}`;
+  } catch(e) { $('partnerDetails').innerHTML = `<div class="bad">${esc(e.message)}</div>`; }
 }
 $('partnerFilter')?.addEventListener('input', renderPartners);
 $('refreshPartnersBtn')?.addEventListener('click', loadPartners);
@@ -138,20 +151,20 @@ $('searchInput')?.addEventListener('keydown', e => { if (e.key === 'Enter') doSe
 async function doSearch() {
   const q = $('searchInput').value.trim();
   if (!q) return;
-  $('searchResult').innerHTML = '<div class="card muted">Ищу...</div>';
+  $('searchResult').innerHTML = '<div class="muted">Ищу...</div>';
   try {
     const data = await api('/api/search?q=' + encodeURIComponent(q));
     const prices = data.prices || [];
     const rows = prices.map(p => `<tr><td><b>${esc(p.clinic_name)}</b></td><td>${esc(p.standardized_name || p.original_name)}</td><td>${money(p.price)}</td><td>${esc(p.category || '—')}</td><td>${esc(p.confidence)}%</td><td>${itemStatus(p)}</td></tr>`).join('');
     $('searchResult').innerHTML = table(['Клиника','Услуга','Цена','Категория','Match','Статус'], rows, 'Ничего не найдено');
-  } catch(e) { $('searchResult').innerHTML = `<div class="card bad">${esc(e.message)}</div>`; }
+  } catch(e) { $('searchResult').innerHTML = `<div class="bad">${esc(e.message)}</div>`; }
 }
 
 $('loadReviewBtn')?.addEventListener('click', loadUnmatched);
 async function loadUnmatched() {
-  $('reviewResult').innerHTML = '<div class="card muted">Загружаю...</div>';
+  $('reviewResult').innerHTML = '<div class="muted">Загружаю...</div>';
   try { lastReviewItems = await api('/api/unmatched'); renderReview(); }
-  catch(e) { $('reviewResult').innerHTML = `<div class="card bad">${esc(e.message)}</div>`; }
+  catch(e) { $('reviewResult').innerHTML = `<div class="bad">${esc(e.message)}</div>`; }
 }
 function reviewPassesFilter(item) {
   const clinic = ($('reviewClinicFilter')?.value || '').trim().toLowerCase();
