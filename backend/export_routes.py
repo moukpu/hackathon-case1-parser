@@ -14,10 +14,11 @@ from backend.main import (
     JOBS,
     JOBS_LOCK,
     app,
+    ci_contains,
     item_to_response,
     price_item_matches_query,
 )
-from db import Partner, PriceItem, get_db
+from db import Partner, PriceItem, Service, get_db
 
 
 PRICE_EXPORT_COLUMNS = [
@@ -52,7 +53,7 @@ SUPPORTED_EXPORT_FORMATS = {"csv", "xlsx"}
 
 
 def safe_export_name(value: str) -> str:
-    value = re.sub(r"[^a-zA-Zа-яА-Я0-9._-]+", "_", value or "export")
+    value = re.sub(r"[^a-zA-Z0-9._-]+", "_", value or "export")
     return value.strip("._-")[:90] or "export"
 
 
