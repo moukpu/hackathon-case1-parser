@@ -60,17 +60,18 @@ function renderAuthUser(user) {
   document.getElementById('logoutBtn').onclick = async () => { await fetch('/api/auth/logout', { method:'POST' }); localStorage.removeItem('lastJobId'); location.reload(); };
 }
 
-function loadCatalogCleanScript() {
-  if (document.getElementById('catalogCleanScript')) return;
+function loadExtraScript(id, src) {
+  if (document.getElementById(id)) return;
   const script = document.createElement('script');
-  script.id = 'catalogCleanScript';
-  script.src = '/frontend/catalog_clean.js';
+  script.id = id;
+  script.src = src;
   document.head.appendChild(script);
 }
 
 async function initAuthUi() {
   ensureAuthStyles();
-  loadCatalogCleanScript();
+  loadExtraScript('catalogCleanScript', '/frontend/catalog_clean.js');
+  loadExtraScript('jobPollFixScript', '/frontend/job_poll_fix.js');
   try {
     const res = await fetch('/api/auth/me');
     if (!res.ok) throw new Error('noauth');
