@@ -1,412 +1,78 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Прайс Парсер | Hackathon</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <!-- SheetJS for proper Excel export with column widths -->
-    <script src="https://cdn.sheetjs.com/xlsx-0.19.3/package/dist/xlsx.full.min.js"></script>
-    <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #f0f4fd 0%, #f1ebfc 100%);
-            min-height: 100vh;
-        }
-        .glass {
-            background: rgba(255, 255, 255, 0.7);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.5);
-        }
-        .drag-active {
-            border-color: #4f46e5 !important;
-            background-color: rgba(79, 70, 229, 0.05) !important;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MedArchive Parser MVP</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body{font-family:Inter,system-ui,sans-serif;background:linear-gradient(135deg,#eef4ff,#f8f1ff);min-height:100vh}.glass{background:rgba(255,255,255,.78);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.7)}.tab-active{background:linear-gradient(135deg,#4f46e5,#9333ea);color:#fff;box-shadow:0 12px 24px rgba(79,70,229,.22)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  </style>
 </head>
-<body class="text-slate-800 antialiased p-4 md:p-10 relative">
-    
-    <!-- User Profile Header Mock -->
-    <div id="userProfile" class="hidden absolute top-4 right-4 md:top-10 md:right-10 bg-white/80 backdrop-blur-md px-4 py-2 rounded-full border border-slate-200 shadow-sm flex items-center gap-3">
-        <div class="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+<body class="text-slate-800 p-4 md:p-8">
+  <div class="max-w-7xl mx-auto">
+    <header class="mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+      <div>
+        <div class="text-sm font-bold tracking-wide uppercase text-indigo-600 mb-2">Hackathon 2025 · MedArchive</div>
+        <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight text-slate-950">Парсер прайсов клиник</h1>
+        <p class="mt-3 text-slate-500 text-lg">Архивы прайсов → извлечение → справочник → ревью → поиск цен.</p>
+      </div>
+      <a href="/docs" target="_blank" class="inline-flex items-center justify-center px-5 py-3 rounded-2xl bg-slate-950 text-white font-semibold hover:bg-slate-800">Swagger /docs</a>
+    </header>
+
+    <section id="kpi" class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6"></section>
+
+    <nav class="glass p-2 rounded-3xl shadow-xl shadow-indigo-100/50 mb-6 flex flex-wrap gap-2">
+      <button class="tab tab-active px-4 py-3 rounded-2xl font-bold" data-tab="dashboard">Дашборд</button>
+      <button class="tab px-4 py-3 rounded-2xl font-bold text-slate-600 hover:bg-white" data-tab="catalog">Справочник</button>
+      <button class="tab px-4 py-3 rounded-2xl font-bold text-slate-600 hover:bg-white" data-tab="upload">Прайсы</button>
+      <button class="tab px-4 py-3 rounded-2xl font-bold text-slate-600 hover:bg-white" data-tab="search">Поиск</button>
+      <button class="tab px-4 py-3 rounded-2xl font-bold text-slate-600 hover:bg-white" data-tab="review">Ревью</button>
+    </nav>
+
+    <main class="space-y-6">
+      <section id="dashboard" class="tab-panel glass rounded-3xl p-6 shadow-xl shadow-indigo-100/50">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+          <div><h2 class="text-2xl font-extrabold">Состояние MVP</h2><p class="text-slate-500 mt-1">Метрики обработки и нормализации.</p></div>
+          <button id="refreshBtn" class="px-5 py-3 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700">Обновить</button>
         </div>
-        <div>
-            <div class="text-xs text-slate-400 font-medium">Вы вошли как</div>
-            <div id="userProfileName" class="font-bold text-sm text-slate-700 leading-tight"></div>
+        <div class="grid md:grid-cols-2 gap-5">
+          <div class="bg-white/80 rounded-2xl p-5 border border-slate-100"><h3 class="font-bold mb-3">Закрыто по ТЗ</h3><ul class="space-y-2 text-sm text-slate-600"><li>✅ ZIP, PDF, XLSX/XLS/CSV, DOCX extraction</li><li>✅ БД: партнёры, документы, услуги, позиции прайса</li><li>✅ Импорт справочника и fuzzy/exact matching</li><li>✅ API поиска, unmatched queue, ручной match</li><li>⬜ OCR сканов — следующий этап</li><li>⬜ Аномалии цены &gt; 50% — следующий этап</li></ul></div>
+          <div class="bg-white/80 rounded-2xl p-5 border border-slate-100"><h3 class="font-bold mb-3">Демо-сценарий</h3><ol class="space-y-2 text-sm text-slate-600 list-decimal pl-5"><li>Подтянуть или загрузить справочник.</li><li>Загрузить прайс или ZIP клиники.</li><li>Показать auto-match и очередь ревью.</li><li>Подтвердить спорные позиции.</li><li>Найти услугу и цены партнёров.</li></ol></div>
         </div>
-    </div>
+      </section>
 
-    <div class="max-w-6xl mx-auto mt-10">
-        <!-- Header -->
-        <div class="mb-10 text-center">
-            <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight text-slate-900 mb-3 bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600">
-                Прайс Парсер
-            </h1>
-            <p class="text-lg text-slate-500 font-medium">Нейросеть стандартизирует хаос в прайсах клиник</p>
-        </div>
+      <section id="catalog" class="tab-panel hidden glass rounded-3xl p-6 shadow-xl shadow-indigo-100/50">
+        <h2 class="text-2xl font-extrabold mb-2">Справочник услуг</h2><p class="text-slate-500 mb-5">Загрузи XLSX организаторов или используй встроенный демо-справочник.</p>
+        <div class="grid md:grid-cols-2 gap-5">
+          <form id="catalogForm" class="bg-white/80 rounded-2xl p-5 border border-slate-100 space-y-4"><label class="block font-bold">Файл XLSX/CSV/JSON</label><input id="catalogFile" type="file" accept=".xlsx,.csv,.json" required class="block w-full text-sm"><button class="w-full px-5 py-3 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700">Загрузить справочник</button></form>
+          <div class="bg-white/80 rounded-2xl p-5 border border-slate-100 space-y-4"><h3 class="font-bold">Встроенный справочник</h3><p class="text-sm text-slate-500">Для быстрого демо после деплоя.</p><button id="bootstrapBtn" class="w-full px-5 py-3 rounded-2xl bg-slate-950 text-white font-bold hover:bg-slate-800">Подтянуть встроенный справочник</button></div>
+        </div><pre id="catalogResult" class="mono mt-5 p-4 rounded-2xl bg-slate-950 text-slate-100 text-xs overflow-auto hidden"></pre>
+      </section>
 
-        <!-- Upload Section -->
-        <div class="glass p-8 rounded-3xl shadow-xl shadow-indigo-100/50 mb-10 mx-auto max-w-3xl">
-            <form id="uploadForm" class="space-y-6">
-                <!-- Клиника -->
-                <div>
-                    <label class="block text-sm font-semibold text-slate-700 mb-2">Название клиники</label>
-                    <input type="text" id="clinicName" required 
-                        class="w-full px-4 py-3 bg-white/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" 
-                        placeholder="Введите название (например: МедЦентр+)">
-                </div>
+      <section id="upload" class="tab-panel hidden glass rounded-3xl p-6 shadow-xl shadow-indigo-100/50">
+        <h2 class="text-2xl font-extrabold mb-2">Загрузка прайсов</h2><p class="text-slate-500 mb-5">Можно загрузить несколько файлов или ZIP.</p>
+        <form id="priceForm" class="bg-white/80 rounded-2xl p-5 border border-slate-100 space-y-4">
+          <div class="grid md:grid-cols-2 gap-4"><div><label class="block text-sm font-bold mb-2">Клиника</label><input id="clinicName" value="Demo Clinic" class="w-full px-4 py-3 rounded-2xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500"></div><div><label class="block text-sm font-bold mb-2">Дата прайса</label><input id="effectiveDate" type="date" class="w-full px-4 py-3 rounded-2xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500"></div></div>
+          <div><label class="block text-sm font-bold mb-2">Файлы</label><input id="priceFiles" type="file" multiple accept=".zip,.pdf,.xlsx,.xls,.csv,.docx,.txt" required class="block w-full text-sm"></div>
+          <button class="w-full px-5 py-3 rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold hover:opacity-95">Обработать прайс</button>
+        </form><div id="uploadResult" class="mt-5 hidden"></div>
+      </section>
 
-                <!-- Drag & Drop Zone -->
-                <div>
-                    <div class="flex justify-between items-end mb-2">
-                        <label class="block text-sm font-semibold text-slate-700">Файлы прайса</label>
-                    </div>
-                    <div id="dropZone" class="relative border-2 border-dashed border-slate-300 rounded-2xl p-10 flex flex-col items-center justify-center bg-white/50 hover:bg-white/80 transition-all cursor-pointer group">
-                        <input type="file" id="fileInput" accept=".pdf,.xlsx,.xls,.csv" multiple required class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10">
-                        <div class="w-16 h-16 mb-4 rounded-full bg-indigo-50 flex items-center justify-center group-hover:scale-110 transition-transform">
-                            <svg class="w-8 h-8 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
-                        </div>
-                        <p class="text-slate-600 font-medium text-lg mb-1">Перетащите файлы сюда</p>
-                        <p class="text-slate-400 text-sm mb-4">Поддерживаются: Excel, PDF, CSV</p>
-                        
-                        <div id="fileList" class="flex flex-wrap gap-2 justify-center mt-2 relative z-20"></div>
-                    </div>
-                    
-                    <div class="mt-4 flex justify-end">
-                        <button type="button" id="downloadTemplateBtn" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium py-2 px-4 rounded-lg transition-colors flex items-center">
-                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                            Скачать эталонный шаблон
-                        </button>
-                    </div>
-                </div>
+      <section id="search" class="tab-panel hidden glass rounded-3xl p-6 shadow-xl shadow-indigo-100/50">
+        <h2 class="text-2xl font-extrabold mb-2">Поиск услуг и цен</h2><div class="flex gap-3 mb-5"><input id="searchInput" placeholder="Например: УЗИ, терапевт, общий анализ крови" class="flex-1 px-4 py-3 rounded-2xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500"><button id="searchBtn" class="px-6 py-3 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700">Искать</button></div><div id="searchResult"></div>
+      </section>
 
-                <!-- Submit Button -->
-                <button type="submit" id="submitBtn" class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold py-4 px-6 rounded-xl shadow-lg shadow-indigo-200 transition-all flex justify-center items-center transform hover:-translate-y-0.5">
-                    <span id="btnText">Нормализовать прайс</span>
-                    <svg id="spinner" class="animate-spin ml-3 h-5 w-5 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                </button>
-            </form>
-            <div id="errorMsg" class="mt-4 p-4 bg-red-50 text-red-700 rounded-xl text-sm hidden font-medium border border-red-100"></div>
-        </div>
-
-        <!-- Results Section -->
-        <div id="resultsBlock" class="hidden">
-            <!-- Дашборд -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <div class="glass p-6 rounded-2xl shadow-sm border border-slate-200">
-                    <div class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-1">Распознано услуг</div>
-                    <div class="text-4xl font-extrabold text-indigo-600" id="statTotal">0</div>
-                </div>
-                <div class="glass p-6 rounded-2xl shadow-sm border border-slate-200">
-                    <div class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-1">Категорий</div>
-                    <div class="text-4xl font-extrabold text-indigo-600" id="statCategories">0</div>
-                </div>
-                <div class="glass p-6 rounded-2xl shadow-sm border border-amber-200 bg-amber-50/50">
-                    <div class="text-sm font-semibold text-amber-700 uppercase tracking-wider mb-1">Проверить вручную</div>
-                    <div class="text-4xl font-extrabold text-amber-600" id="statWarnings">0</div>
-                </div>
-            </div>
-
-            <!-- Table Header Actions -->
-            <div class="glass p-4 rounded-t-2xl border-b-0 border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-4">
-                <div class="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
-                    <input type="text" id="searchInput" placeholder="Поиск услуг..." class="px-4 py-2.5 bg-white/80 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 w-full sm:w-64 transition-all text-sm">
-                    <select id="categoryFilter" class="px-4 py-2.5 bg-white/80 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 w-full sm:w-48 transition-all text-sm font-medium text-slate-700">
-                        <option value="all">Все категории</option>
-                    </select>
-                </div>
-                <div class="flex gap-3 w-full md:w-auto flex-col sm:flex-row">
-                    <button id="exportCsvBtn" class="bg-slate-100 text-slate-700 hover:bg-slate-200 px-6 py-3 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center w-full md:w-auto shadow-sm border border-slate-200">
-                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                        Скачать Excel
-                    </button>
-                    <button id="sendToAggregatorBtn" class="bg-emerald-600 text-white hover:bg-emerald-700 px-6 py-3 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center w-full md:w-auto shadow-md">
-                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                        На агрегатор
-                    </button>
-                </div>
-            </div>
-
-            <!-- Table -->
-            <div class="overflow-x-auto bg-white/80 backdrop-blur-md rounded-b-2xl shadow-lg border border-slate-200">
-                <table class="w-full text-sm text-left">
-                    <thead class="text-xs text-slate-500 uppercase bg-slate-50/80 border-b border-slate-200">
-                        <tr>
-                            <th class="px-6 py-4 font-semibold text-indigo-700">Стандартное название</th>
-                            <th class="px-6 py-4 font-semibold">Цена</th>
-                            <th class="px-6 py-4 font-semibold">Категория</th>
-                            <th class="px-6 py-4 font-semibold text-center">Точность</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tableBody" class="divide-y divide-slate-100">
-                        <!-- Строки заполняются через JS -->
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        let currentData = [];
-
-        // --- Config ---
-        // ПРИ ДЕПЛОЕ ПОМЕНЯЙТЕ ЭТУ ССЫЛКУ НА РЕАЛЬНЫЙ АДРЕС АГРЕГАТОРА (например, https://my-aggregator.vercel.app)
-        const AGGREGATOR_URL = "https://novion-arge.up.railway.app";
-
-        // --- Initialization ---
-        const urlParams = new URLSearchParams(window.location.search);
-        const clinicToken = urlParams.get('token');
-        const clinicNameParam = urlParams.get('clinic');
-        
-        const clinicNameInput = document.getElementById('clinicName');
-        const clinicNameBlock = clinicNameInput.parentElement;
-        const sendToAggregatorBtn = document.getElementById('sendToAggregatorBtn');
-
-        if (clinicToken && clinicNameParam) {
-            // Если есть токен и имя, показываем профиль и предзаполняем имя
-            const decodedName = decodeURIComponent(clinicNameParam);
-            const userProfile = document.getElementById('userProfile');
-            const userProfileName = document.getElementById('userProfileName');
-            clinicNameInput.value = decodedName; // Было "Авто-привязка к агрегатору"
-            clinicNameInput.readOnly = true;
-            
-            if(userProfile && userProfileName) {
-                userProfile.classList.remove('hidden');
-                userProfileName.textContent = decodedName;
-            }
-        } else {
-            // Скрываем элементы, если зашли без параметров из кабинета
-            if (clinicNameBlock) clinicNameBlock.style.display = 'none';
-            if (sendToAggregatorBtn) sendToAggregatorBtn.style.display = 'none';
-            // Убираем required, чтобы форма отправлялась без названия клиники
-            clinicNameInput.required = false;
-            clinicNameInput.value = "Анонимный тест";
-        }
-
-        // --- Drag and Drop UI Logic ---
-        const dropZone = document.getElementById('dropZone');
-        const fileInput = document.getElementById('fileInput');
-        const fileList = document.getElementById('fileList');
-
-        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-            dropZone.addEventListener(eventName, preventDefaults, false);
-        });
-
-        function preventDefaults(e) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
-
-        ['dragenter', 'dragover'].forEach(eventName => {
-            dropZone.addEventListener(eventName, () => dropZone.classList.add('drag-active'), false);
-        });
-
-        ['dragleave', 'drop'].forEach(eventName => {
-            dropZone.addEventListener(eventName, () => dropZone.classList.remove('drag-active'), false);
-        });
-
-        fileInput.addEventListener('change', updateFileList);
-        dropZone.addEventListener('drop', updateFileList);
-
-        function updateFileList() {
-            fileList.innerHTML = '';
-            if (fileInput.files.length > 0) {
-                Array.from(fileInput.files).forEach(file => {
-                    const pill = document.createElement('span');
-                    pill.className = 'bg-indigo-100 text-indigo-700 text-xs px-3 py-1 rounded-full font-medium';
-                    pill.textContent = file.name;
-                    fileList.appendChild(pill);
-                });
-            }
-        }
-
-        // --- Template Download Logic (Excel) ---
-        document.getElementById('downloadTemplateBtn').addEventListener('click', () => {
-            const ws_data = [
-                ['Код услуги', 'Название услуги', 'Цена'],
-                ['A01.01', 'Первичная консультация терапевта', 10000],
-                ['A01.02', 'Повторная консультация терапевта', 8000],
-                ['B03.14', 'МРТ головного мозга с контрастом', 45000]
-            ];
-            const ws = XLSX.utils.aoa_to_sheet(ws_data);
-            ws['!cols'] = [{wch: 15}, {wch: 40}, {wch: 10}];
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Шаблон");
-            XLSX.writeFile(wb, "Прайс_Шаблон_Эталон.xlsx");
-        });
-
-        // --- Table Render Logic ---
-        function renderTable(dataToRender) {
-            const tbody = document.getElementById('tableBody');
-            tbody.innerHTML = '';
-            
-            let warnings = 0;
-            const categories = new Set();
-
-            dataToRender.forEach(item => {
-                categories.add(item.category || 'Без категории');
-                const conf = item.confidence ?? 100;
-                const isWarning = conf < 85;
-                if (isWarning) warnings++;
-                
-                const tr = document.createElement('tr');
-                tr.className = `hover:bg-slate-50 transition-colors ${isWarning ? 'bg-amber-50/50' : ''}`;
-                tr.innerHTML = `
-                    <td class="px-6 py-4 font-medium text-slate-800 w-1/2">${item.standardized_name || '-'}</td>
-                    <td class="px-6 py-4 font-bold text-slate-800 whitespace-nowrap">${item.price ? item.price + ' ₸' : '-'}</td>
-                    <td class="px-6 py-4"><span class="bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs px-2.5 py-1 rounded-lg font-medium whitespace-nowrap">${item.category || '-'}</span></td>
-                    <td class="px-6 py-4 text-center font-bold ${isWarning ? 'text-amber-500' : 'text-emerald-500'}">${conf}%</td>
-                `;
-                tbody.appendChild(tr);
-            });
-            
-            return { warnings, categoriesCount: categories.size, categoriesList: Array.from(categories) };
-        }
-
-        // --- Filters ---
-        function applyFilters() {
-            const q = document.getElementById('searchInput').value.toLowerCase();
-            const cat = document.getElementById('categoryFilter').value;
-            
-            const filtered = currentData.filter(item => {
-                const matchQ = (item.standardized_name || '').toLowerCase().includes(q) || (item.original_name || '').toLowerCase().includes(q);
-                const matchCat = cat === 'all' || (item.category || 'Без категории') === cat;
-                return matchQ && matchCat;
-            });
-            renderTable(filtered);
-        }
-
-        document.getElementById('searchInput').addEventListener('input', applyFilters);
-        document.getElementById('categoryFilter').addEventListener('change', applyFilters);
-
-        // --- Excel Export (SheetJS) ---
-        document.getElementById('exportCsvBtn').addEventListener('click', () => {
-            if (!currentData.length) return;
-            
-            const ws_data = [
-                ['Код', 'Стандартное название', 'Цена', 'Категория', 'Точность ИИ']
-            ];
-            
-            currentData.forEach(item => {
-                ws_data.push([
-                    item.service_code || '',
-                    item.standardized_name || '',
-                    item.price || '',
-                    item.category || '',
-                    (item.confidence ?? 100) + '%'
-                ]);
-            });
-            
-            // Добавляем статистику в конец файла
-            ws_data.push([]);
-            ws_data.push(['ОТЧЕТ ОБРАБОТКИ']);
-            ws_data.push(['Всего услуг:', currentData.length]);
-            const uniqueCategories = new Set(currentData.map(i => i.category || 'Без категории')).size;
-            ws_data.push(['Уникальных категорий:', uniqueCategories]);
-            const warnings = currentData.filter(i => (i.confidence ?? 100) < 85).length;
-            ws_data.push(['Позиций с низкой точностью (<85%):', warnings]);
-
-            const ws = XLSX.utils.aoa_to_sheet(ws_data);
-            
-            // Задаем ширину колонок чтобы текст влезал нормально!
-            ws['!cols'] = [
-                {wch: 15}, // Код
-                {wch: 60}, // Название
-                {wch: 12}, // Цена
-                {wch: 35}, // Категория
-                {wch: 15}  // Точность
-            ];
-
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Прайс");
-            
-            XLSX.writeFile(wb, "Прайс_Стандартизованный.xlsx");
-        });
-
-        // --- Send to Aggregator ---
-        document.getElementById('sendToAggregatorBtn').addEventListener('click', () => {
-            if (!currentData.length) return;
-            
-            if (clinicToken) {
-                const clinicName = document.getElementById('clinicName').value;
-                // Вместо передачи мегабайтного JSON в URL, мы передаем только имя клиники.
-                // Агрегатор сам скачает данные из нашей базы через API.
-                window.location.href = `${AGGREGATOR_URL}/sync-prices?token=${clinicToken}&clinic=${encodeURIComponent(clinicName)}`;
-            } else {
-                alert("Ошибка безопасности: Секретный токен клиники не найден. Пожалуйста, откройте парсер по ссылке из вашего личного кабинета.");
-            }
-        });
-
-        // --- Form Submit ---
-        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const clinicName = document.getElementById('clinicName').value;
-            
-            if (!fileInput.files.length) {
-                alert("Пожалуйста, загрузите хотя бы один файл.");
-                return;
-            }
-
-            const btnText = document.getElementById('btnText');
-            const spinner = document.getElementById('spinner');
-            const errorMsg = document.getElementById('errorMsg');
-            const resultsBlock = document.getElementById('resultsBlock');
-            
-            btnText.textContent = 'Нейросеть обрабатывает данные...';
-            spinner.classList.remove('hidden');
-            errorMsg.classList.add('hidden');
-            resultsBlock.classList.add('hidden');
-            document.getElementById('submitBtn').disabled = true;
-            
-            const formData = new FormData();
-            for (let i = 0; i < fileInput.files.length; i++) {
-                formData.append('files', fileInput.files[i]);
-            }
-            formData.append('clinic_name', clinicName);
-
-            try {
-                const response = await fetch('/api/upload', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const data = await response.json();
-                
-                if (!response.ok) {
-                    throw new Error(data.detail || 'Произошла ошибка при обработке');
-                }
-                
-                currentData = data.data;
-                const stats = renderTable(currentData);
-                
-                document.getElementById('statTotal').textContent = currentData.length;
-                document.getElementById('statCategories').textContent = stats.categoriesCount;
-                document.getElementById('statWarnings').textContent = stats.warnings;
-                
-                const catFilter = document.getElementById('categoryFilter');
-                catFilter.innerHTML = '<option value="all">Все категории</option>';
-                stats.categoriesList.sort().forEach(cat => {
-                    const opt = document.createElement('option');
-                    opt.value = cat;
-                    opt.textContent = cat;
-                    catFilter.appendChild(opt);
-                });
-                
-                resultsBlock.classList.remove('hidden');
-            } catch (error) {
-                errorMsg.textContent = "Ошибка: " + error.message;
-                errorMsg.classList.remove('hidden');
-            } finally {
-                btnText.textContent = 'Нормализовать прайс';
-                spinner.classList.add('hidden');
-                document.getElementById('submitBtn').disabled = false;
-            }
-        });
-    </script>
+      <section id="review" class="tab-panel hidden glass rounded-3xl p-6 shadow-xl shadow-indigo-100/50">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-5"><div><h2 class="text-2xl font-extrabold">Очередь ручной проверки</h2><p class="text-slate-500">Низкая уверенность, unmatched, ошибки цены.</p></div><button id="loadReviewBtn" class="px-5 py-3 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700">Обновить очередь</button></div>
+        <div class="bg-white/80 rounded-2xl p-4 border border-slate-100 mb-5 grid md:grid-cols-3 gap-3"><input id="reviewServiceSearch" placeholder="Найти услугу справочника" class="md:col-span-2 px-4 py-3 rounded-2xl border border-slate-200"><button id="reviewServiceBtn" class="px-5 py-3 rounded-2xl bg-slate-950 text-white font-bold">Найти</button><select id="reviewServiceSelect" class="md:col-span-3 px-4 py-3 rounded-2xl border border-slate-200"></select></div>
+        <div id="reviewResult"></div>
+      </section>
+    </main>
+  </div>
+  <script src="/frontend/app.js"></script>
 </body>
 </html>
