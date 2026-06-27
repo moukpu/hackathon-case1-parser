@@ -3,12 +3,17 @@ from typing import Any
 
 
 # Prices in PDFs are often rendered as `22 200`, `4 900`, `86 300`.
-# The previous regex treated the last group (`200`, `900`, `300`) as the price.
+# Also, Excel/PDF table extractors can split them into cells: `22` + `200`.
 PRICE_RE = re.compile(r"(?<!\d)(\d{1,3}(?:[\s\u00a0]\d{3})+(?:[,.]\d{1,2})?|\d{3,}(?:[,.]\d{1,2})?)(?!\d)")
 CODE_PREFIX_RE = re.compile(r"^\s*[A-ZА-Я]{1,6}\s*\d+(?:[.,]\d+)*(?:\s*[A-ZА-Я])?[.)\-\s,;:]+", re.I)
 TRAILING_COUNT_RE = re.compile(r"\s+\d{1,3}\s*$")
 MONTHS_RE = re.compile(r"\b(январ[ья]|феврал[ья]|март[а]?|апрел[ья]|ма[йя]|июн[ья]|июл[ья]|август[а]?|сентябр[ья]|октябр[ья]|ноябр[ья]|декабр[ья])\b", re.I)
 DATE_RE = re.compile(r"\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?\b")
+SPLIT_OCR_PRICE_TAIL_RE = re.compile(r"^[\s\u00a0]+(?:\d{1,2}|[0oоcс()]{1,4})(?:\D|$)", re.I)
+NUMERIC_CELL_RE = re.compile(r"^\d{1,3}(?:\.0)?$")
+THOUSAND_GROUP_CELL_RE = re.compile(r"^\d{3}(?:\.0)?$")
+MIN_REASONABLE_PRICE_KZT = 100
+MAX_REASONABLE_PRICE_KZT = 20_000_000
 
 SKIP_WORDS = {
     "цена", "стоимость", "прайс", "наименование", "услуга", "код", "итого",
@@ -20,6 +25,8 @@ SKIP_WORDS = {
 GENERIC_NAMES = {
     "прием", "приём", "повторный", "первичный", "операция", "манипуляция",
     "услуга", "услуги", "консультация", "исследование", "анализ", "перевод",
+    "процедура", "единица", "пакет", "койко-день", "койко-час", "штука",
+    "прием", "исследование",
 }
 
 SERVICE_KEYWORDS = [
@@ -42,13 +49,56 @@ def parse_price_number(value: str) -> float | None:
         price = float(raw)
     except ValueError:
         return None
-    if price < 100 or price > 20_000_000:
+    if price < MIN_REASONABLE_PRICE_KZT or price > MAX_REASONABLE_PRICE_KZT:
         return None
     return price
 
 
 def price_matches(value: str) -> list[re.Match]:
     return list(PRICE_RE.finditer(str(value or "").replace("\u00a0", " ")))
+
+
+def _numeric_cell(value: str) -> str | None:
+    text = str(value or "").replace("\u00a0", " ").strip()
+    text = re.sub(r"\s+", "", text)
+    if re.fullmatch(r"\d+\.0", text):
+        text = text[:-2]
+    return text if NUMERIC_CELL_RE.fullmatch(text) else None
+
+
+def parse_grouped_price_from_cells(cells: list[str], end_idx: int) -> tuple[int, float] | None:
+    """Handle prices split into table cells: ['22', '200'] -> 22200.
+
+    Without this, the parser can read only the leading part (`147`) instead of
+    the full price (`147 000`) in XLS/PDF tables.
+    """
+    parts: list[str] = []
+    idx = end_idx
+
+    while idx >= 0:
+        text = _numeric_cell(cells[idx])
+        if not text or not THOUSAND_GROUP_CELL_RE.fullmatch(text):
+            break
+        parts.append(text)
+        idx -= 1
+
+    lead = _numeric_cell(cells[idx]) if idx >= 0 else None
+    if lead and parts:
+        parts.append(lead)
+        start_idx = idx
+    elif len(parts) >= 2:
+        start_idx = idx + 1
+    else:
+        return None
+
+    raw = "".join(reversed(parts))
+    try:
+        price = float(raw)
+    except ValueError:
+        return None
+    if price < MIN_REASONABLE_PRICE_KZT or price > MAX_REASONABLE_PRICE_KZT:
+        return None
+    return start_idx, price
 
 
 def has_service_signal(text: str) -> bool:
@@ -67,13 +117,17 @@ def is_probably_header_or_noise(text: str) -> bool:
         return True
     if normalized in SKIP_WORDS or normalized in GENERIC_NAMES:
         return True
-    if "приложение" in normalized or "утвержден" in normalized:
+    if "приложение" in normalized or "утвержден" in normalized or "приказ" in normalized:
         return True
     if MONTHS_RE.search(normalized) and not has_service_signal(normalized):
         return True
     if DATE_RE.search(normalized) and not has_service_signal(normalized):
         return True
-    if sum(1 for w in SKIP_WORDS if w in normalized) >= 2 and not has_service_signal(normalized):
+    # Count skip words as whole words. Substring checks on short words like
+    # `с`, `по`, `от` were too aggressive and killed valid service names
+    # such as `Организация питания пациентов для взрослых`.
+    tokens = set(re.findall(r"[a-zа-я0-9]+", normalized))
+    if len(tokens & SKIP_WORDS) >= 2 and not has_service_signal(normalized):
         return True
     if re.fullmatch(r"[\d\W_]+", normalized):
         return True
@@ -97,6 +151,11 @@ def row_to_item(cells: list[str]) -> dict[str, Any] | None:
     price_idx = None
     price_value = None
     for idx in range(len(cells) - 1, -1, -1):
+        grouped = parse_grouped_price_from_cells(cells, idx)
+        if grouped is not None:
+            price_idx, price_value = grouped
+            break
+
         price = parse_price_number(cells[idx])
         if price is not None:
             price_idx = idx
@@ -152,7 +211,15 @@ def line_to_item(line: str) -> dict[str, Any] | None:
         price = float(raw_price)
     except ValueError:
         return None
-    if price < 100 or price > 20_000_000:
+
+    # OCR sometimes drops the last zero in grouped prices: `147 000` becomes
+    # `147 00`. The old parser accepted `147` as the price. Do not guess
+    # whether it was 1 470 / 14 700 / 147 000; skip this row for review/OCR.
+    tail_after_price = line[m.end():]
+    if SPLIT_OCR_PRICE_TAIL_RE.match(tail_after_price) and (price < 10_000 or re.search(r"[0oоcс()]", tail_after_price, re.I)):
+        return None
+
+    if price < MIN_REASONABLE_PRICE_KZT or price > MAX_REASONABLE_PRICE_KZT:
         return None
 
     name = clean_service_name(line[:m.start()])
@@ -183,10 +250,9 @@ def parse_price_list_locally(raw_text: str, max_items: int = 5000) -> list[dict[
         if not line:
             continue
 
-        item = None
         if "\t" in line:
             item = row_to_item(line.split("\t"))
-        if item is None:
+        else:
             item = line_to_item(line)
 
         if not item:
@@ -198,5 +264,4 @@ def parse_price_list_locally(raw_text: str, max_items: int = 5000) -> list[dict[
         items.append(item)
         if len(items) >= max_items:
             break
-
     return items
