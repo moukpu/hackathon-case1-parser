@@ -63,7 +63,7 @@ def persist_user_catalog(user_id: str, file_name: str, contents: bytes) -> Path:
 main.preferred_catalog_path = preferred_catalog_path
 main.persist_user_catalog = persist_user_catalog
 
-for module_name in ("job_db_tracking", "stats_override"):
+for module_name in ("job_db_tracking", "stats_override", "service_search_override"):
     try:
         __import__("backend." + module_name)
     except Exception:
