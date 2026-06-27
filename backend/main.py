@@ -25,6 +25,7 @@ from db import (
     engine,
     get_db,
     get_or_create_partner,
+    SessionLocal,
 )
 from extractor import detect_file_format, extract_text, iter_input_files
 from normalizer import import_service_catalog, match_service
@@ -33,8 +34,8 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="MedArchive Price Parser API",
-    description="MVP for automatic parsing, catalog matching, verification queue and price search.",
-    version="0.2.0",
+    description="MVP: parsing partner clinic price archives, service catalog matching, verification queue and search.",
+    version="0.3.0",
 )
 
 app.add_middleware(
@@ -49,8 +50,10 @@ frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
 if os.path.isdir(frontend_dir):
     app.mount("/frontend", StaticFiles(directory=frontend_dir), name="frontend")
 
-UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", os.path.join(os.path.dirname(__file__), "..", "uploads")))
+ROOT_DIR = Path(os.path.dirname(__file__)).parent
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", str(ROOT_DIR / "uploads")))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+BUNDLED_CATALOG_PATH = ROOT_DIR / "data" / "services_catalog.csv"
 
 
 class ManualMatchRequest(BaseModel):
@@ -108,8 +111,32 @@ def item_to_response(item: PriceItem) -> dict:
         "match_method": item.match_method,
         "needs_review": item.needs_review,
         "is_verified": item.is_verified,
+        "note": item.verification_note,
         "effective_date": item.effective_date.isoformat() if item.effective_date else None,
     }
+
+
+def bootstrap_catalog_if_needed(force: bool = False) -> dict:
+    db = SessionLocal()
+    try:
+        current_count = db.query(Service).count()
+        if current_count and not force:
+            return {"message": "Справочник уже загружен", "services": current_count, "skipped_bootstrap": True}
+        if not BUNDLED_CATALOG_PATH.exists():
+            return {"message": "Встроенный справочник не найден", "services": current_count, "skipped_bootstrap": True}
+        result = import_service_catalog(db, BUNDLED_CATALOG_PATH.name, BUNDLED_CATALOG_PATH.read_bytes())
+        return {"message": "Встроенный справочник загружен", **result, "services": db.query(Service).count()}
+    except Exception as exc:
+        db.rollback()
+        return {"message": "Ошибка загрузки встроенного справочника", "error": str(exc)}
+    finally:
+        db.close()
+
+
+@app.on_event("startup")
+def startup_bootstrap_catalog():
+    # Keeps demo usable after Railway redeploy even if the operator has not uploaded XLSX yet.
+    bootstrap_catalog_if_needed(force=False)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -121,11 +148,28 @@ async def read_index():
     return "<h1>MedArchive Price Parser API</h1><p>Open /docs for Swagger.</p>"
 
 
+@app.get("/api/health")
+async def health(db: Session = Depends(get_db)):
+    return {"ok": True, "services": db.query(Service).count(), "documents": db.query(PriceDocument).count()}
+
+
+@app.post("/api/catalog/bootstrap")
+async def bootstrap_catalog(force: bool = False):
+    result = bootstrap_catalog_if_needed(force=force)
+    if result.get("error"):
+        raise HTTPException(status_code=500, detail=result)
+    return result
+
+
 @app.post("/api/catalog/upload")
 async def upload_catalog(file: UploadFile = File(...), db: Session = Depends(get_db)):
     contents = await file.read()
-    result = import_service_catalog(db, file.filename, contents)
-    return {"message": "Справочник услуг загружен", **result}
+    try:
+        result = import_service_catalog(db, file.filename, contents)
+        return {"message": "Справочник услуг загружен", **result, "services": db.query(Service).count()}
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Ошибка импорта справочника: {exc}")
 
 
 @app.post("/api/partners")
@@ -150,6 +194,9 @@ async def upload_file(
     groq_api_key = os.getenv("GROQ_API_KEY")
     if not groq_api_key:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY не настроен.")
+
+    if db.query(Service).count() == 0:
+        bootstrap_catalog_if_needed(force=False)
 
     partner = get_or_create_partner(db, clinic_name)
     parsed_effective_date = date.today()
@@ -273,17 +320,8 @@ async def upload_file(
 
     db.commit()
 
-    if not all_response_items:
-        return {
-            "message": "Файлы обработаны, но позиции не извлечены.",
-            "clinic_name": partner.name,
-            "documents": document_results,
-            "items_found": 0,
-            "data": [],
-        }
-
     return {
-        "message": "Успешно обработано!",
+        "message": "Успешно обработано!" if all_response_items else "Файлы обработаны, но позиции не извлечены.",
         "clinic_name": partner.name,
         "documents": document_results,
         "items_found": len(all_response_items),
