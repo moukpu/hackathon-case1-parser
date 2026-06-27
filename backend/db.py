@@ -15,11 +15,13 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    event,
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 DB_PATH = os.getenv("DATABASE_PATH", os.path.join(os.path.dirname(__file__), "..", "prices.db"))
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
+LOW_PRICE_REVIEW_THRESHOLD_KZT = float(os.getenv("LOW_PRICE_REVIEW_THRESHOLD_KZT", "1000"))
 
 connect_args = {"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args=connect_args)
@@ -127,6 +129,34 @@ class PriceItem(Base):
     document = relationship("PriceDocument", back_populates="price_items")
     partner = relationship("Partner", back_populates="price_items")
     service = relationship("Service", back_populates="price_items")
+
+
+def _append_note(current: str | None, note: str) -> str:
+    current = (current or "").strip()
+    if not current:
+        return note
+    if note in current:
+        return current
+    return f"{current}; {note}"
+
+
+@event.listens_for(PriceItem, "before_insert")
+@event.listens_for(PriceItem, "before_update")
+def flag_low_price_for_review(mapper, connection, target: PriceItem) -> None:
+    """Generic data-quality guard: suspiciously low medical prices go to review.
+
+    We do not delete them because some cheap lab/service rows can be real.
+    We only mark them for operator review.
+    """
+    price = target.price_resident_kzt
+    if target.is_verified:
+        return
+    if price is not None and 0 < float(price) < LOW_PRICE_REVIEW_THRESHOLD_KZT:
+        target.needs_review = True
+        target.verification_note = _append_note(
+            target.verification_note,
+            f"Подозрительно низкая цена < {int(LOW_PRICE_REVIEW_THRESHOLD_KZT)} ₸",
+        )
 
 
 def get_db():
