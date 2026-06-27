@@ -179,15 +179,4 @@ function initReviewImprovements() {
   ensureReviewCandidateBox();
 }
 
-function loadCatalogSettingsUiScript() {
-  if (document.getElementById('catalogSettingsScript')) return;
-  const script = document.createElement('script');
-  script.id = 'catalogSettingsScript';
-  script.src = '/frontend/catalog_settings.js';
-  document.head.appendChild(script);
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  setTimeout(initReviewImprovements, 0);
-  loadCatalogSettingsUiScript();
-});
+document.addEventListener('DOMContentLoaded', () => setTimeout(initReviewImprovements, 0));
