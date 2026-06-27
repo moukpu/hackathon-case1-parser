@@ -3,82 +3,105 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Парсер прайсов клиник</title>
+  <title>Парсер прайсов</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <style>
-    :root{--ink:#0f172a;--muted:#64748b;--line:#e5e7eb;--soft:#f8fafc;--brand:#4f46e5;--brand2:#7c3aed}*{box-sizing:border-box}body{font-family:Inter,system-ui,sans-serif;background:#f6f7fb;color:var(--ink);min-height:100vh}.shell{max-width:1280px;margin:0 auto;padding:24px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}.logo{display:flex;align-items:center;gap:12px}.mark{width:42px;height:42px;border-radius:16px;background:linear-gradient(135deg,var(--brand),var(--brand2));box-shadow:0 16px 34px rgba(79,70,229,.24)}.brand-title{font-weight:900;font-size:20px;letter-spacing:-.03em}.brand-sub{font-size:12px;color:var(--muted);font-weight:700}.nav{display:flex;gap:8px;flex-wrap:wrap;background:#fff;border:1px solid var(--line);border-radius:22px;padding:6px;box-shadow:0 10px 30px rgba(15,23,42,.04);margin-bottom:18px}.tab{border:0;background:transparent;border-radius:16px;padding:12px 16px;font-weight:800;color:#475569;cursor:pointer}.tab:hover{background:#f8fafc}.tab-active{background:#111827;color:#fff}.panel{background:#fff;border:1px solid var(--line);border-radius:28px;box-shadow:0 18px 50px rgba(15,23,42,.06);padding:24px}.panel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px}.h1{font-size:28px;line-height:1.1;font-weight:900;letter-spacing:-.04em}.hint{color:var(--muted);font-size:14px;margin-top:6px}.btn{border:0;border-radius:16px;padding:13px 18px;font-weight:900;cursor:pointer;background:#111827;color:#fff}.btn-primary{background:linear-gradient(135deg,var(--brand),var(--brand2));box-shadow:0 14px 28px rgba(79,70,229,.22)}.btn-soft{background:#f1f5f9;color:#0f172a}.input{width:100%;border:1px solid var(--line);border-radius:18px;padding:14px 16px;outline:none;background:#fff;font:inherit}.input:focus{border-color:#818cf8;box-shadow:0 0 0 4px #e0e7ff}.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.card{border:1px solid var(--line);border-radius:22px;background:#fff;padding:18px}.metric{border:1px solid var(--line);border-radius:22px;background:linear-gradient(180deg,#fff,#fafafa);padding:18px}.metric-label{font-size:12px;color:var(--muted);font-weight:800;text-transform:uppercase;letter-spacing:.04em}.metric-value{font-size:32px;font-weight:900;letter-spacing:-.04em;margin-top:6px}.drop{border:1.5px dashed #c7d2fe;background:linear-gradient(180deg,#fff,#f8fbff);border-radius:26px;padding:42px;text-align:center;cursor:pointer;transition:.16s}.drop:hover{border-color:#6366f1;transform:translateY(-1px)}.drop-icon{width:60px;height:60px;border-radius:20px;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;display:grid;place-items:center;font-size:30px;margin:0 auto 14px}.hidden-file{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:22px;background:#fff}.table{width:100%;border-collapse:collapse;font-size:14px}.table th{text-align:left;color:#64748b;font-weight:800;padding:14px 16px;border-bottom:1px solid var(--line);white-space:nowrap}.table td{padding:13px 16px;border-bottom:1px solid #f1f5f9;vertical-align:top}.badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:900}.ok{background:#ecfdf5;color:#047857}.warn{background:#fffbeb;color:#b45309}.bad{background:#fef2f2;color:#dc2626}.muted{color:var(--muted)}.split{display:grid;grid-template-columns:320px 1fr;gap:16px}.partner-list{display:flex;flex-direction:column;gap:8px}.partner-btn{width:100%;text-align:left;border:1px solid var(--line);background:#fff;border-radius:18px;padding:14px;cursor:pointer}.partner-btn:hover,.partner-btn.active{border-color:#818cf8;background:#eef2ff}.mini{font-size:12px;color:var(--muted);font-weight:700}.chips{display:flex;flex-wrap:wrap;gap:8px}.chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:8px 11px;font-size:12px;font-weight:800;color:#475569}@media(max-width:860px){.shell{padding:16px}.grid-2,.grid-3,.split{grid-template-columns:1fr}.topbar,.panel-head{align-items:flex-start;flex-direction:column}.drop{padding:28px}}
+    :root{
+      --bg:#f4f5f7;--panel:#ffffff;--ink:#111827;--muted:#6b7280;--line:#e5e7eb;
+      --line-strong:#d1d5db;--accent:#4f46e5;--accent-soft:#eef2ff;--good:#047857;--good-soft:#ecfdf5;
+      --warn:#a16207;--warn-soft:#fffbeb;--bad:#b91c1c;--bad-soft:#fef2f2;
+    }
+    *{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink);background:var(--bg)}
+    body{font-size:14px}.app{min-height:100vh;display:grid;grid-template-columns:248px 1fr}.side{background:#fbfbfc;border-right:1px solid var(--line);padding:22px 14px;display:flex;flex-direction:column;gap:22px}.brand{padding:0 10px}.brand-main{font-size:18px;font-weight:800;letter-spacing:-.03em}.brand-sub{margin-top:4px;font-size:12px;color:var(--muted)}.nav{display:flex;flex-direction:column;gap:4px}.tab{border:0;background:transparent;color:#374151;padding:10px 12px;border-radius:10px;text-align:left;font-weight:650;cursor:pointer;letter-spacing:-.01em}.tab:hover{background:#f1f2f4}.tab-active{background:#111827;color:#fff}.side-foot{margin-top:auto;padding:12px 10px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);line-height:1.45}.main{min-width:0;padding:28px 34px 42px}.topline{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}.page-title{font-size:30px;font-weight:850;letter-spacing:-.045em;line-height:1.05}.page-note{font-size:13px;color:var(--muted);margin-top:6px}.status-dot{width:7px;height:7px;border-radius:99px;background:#10b981;display:inline-block}.top-status{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}.panel + .panel{margin-top:16px}.panel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:14px}.h1{font-size:22px;font-weight:820;letter-spacing:-.035em}.hint{color:var(--muted);font-size:13px;margin-top:4px}.btn{border:1px solid #111827;background:#111827;color:#fff;border-radius:10px;padding:10px 14px;font-weight:750;cursor:pointer;white-space:nowrap}.btn:hover{filter:brightness(.96)}.btn-primary{background:var(--accent);border-color:var(--accent)}.btn-soft{background:#fff;color:#111827;border-color:var(--line-strong)}.input{width:100%;height:40px;border:1px solid var(--line-strong);border-radius:10px;background:#fff;padding:0 12px;outline:none;color:var(--ink)}.input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,70,229,.11)}.drop{display:block;border:1.5px dashed #b7bdd0;background:#fafafa;border-radius:14px;padding:44px 24px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s}.drop:hover{background:#fff;border-color:var(--accent)}.drop-icon{display:none}.drop-title{font-size:21px;font-weight:820;letter-spacing:-.03em}.hidden-file{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}.chips{display:flex;flex-wrap:wrap;gap:6px}.chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 9px;font-size:12px;font-weight:700;color:#4b5563}.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.card{border:1px solid var(--line);border-radius:14px;background:#fff;padding:14px}.metric{border:1px solid var(--line);border-radius:14px;background:#fff;padding:14px}.metric-label{font-size:11px;line-height:1;text-transform:uppercase;letter-spacing:.06em;font-weight:800;color:var(--muted)}.metric-value{font-size:25px;font-weight:850;letter-spacing:-.04em;margin-top:8px}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:14px;background:#fff}.table{width:100%;border-collapse:collapse;font-size:13px}.table th{text-align:left;color:#6b7280;font-size:12px;font-weight:800;padding:11px 12px;border-bottom:1px solid var(--line);background:#fafafa;white-space:nowrap}.table td{padding:11px 12px;border-bottom:1px solid #f0f1f3;vertical-align:top}.table tr:last-child td{border-bottom:0}.badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 8px;font-size:11px;font-weight:800;border:1px solid var(--line);background:#fff;color:#4b5563}.ok{background:var(--good-soft);color:var(--good);border-color:#bbf7d0}.warn{background:var(--warn-soft);color:var(--warn);border-color:#fde68a}.bad{background:var(--bad-soft);color:var(--bad);border-color:#fecaca}.muted{color:var(--muted)}.split{display:grid;grid-template-columns:300px 1fr;gap:14px}.partner-list{display:flex;flex-direction:column;gap:6px}.partner-btn{width:100%;text-align:left;border:1px solid var(--line);background:#fff;border-radius:12px;padding:11px 12px;cursor:pointer}.partner-btn:hover{border-color:#9ca3af}.partner-btn.active{border-color:var(--accent);background:var(--accent-soft)}.mini{font-size:12px;color:var(--muted);font-weight:650;margin-top:2px}.review-tools{display:grid;grid-template-columns:1fr 170px 130px;gap:10px;margin-bottom:12px}.search-row{display:grid;grid-template-columns:1fr auto;gap:10px}.section-gap{height:14px}.hidden{display:none!important}@media(max-width:920px){.app{grid-template-columns:1fr}.side{position:static}.nav{flex-direction:row;flex-wrap:wrap}.main{padding:20px}.grid-2,.grid-3,.split,.review-tools,.search-row{grid-template-columns:1fr}.side-foot{display:none}}
   </style>
 </head>
 <body>
-  <div class="shell">
-    <header class="topbar">
-      <div class="logo">
-        <div class="mark"></div>
-        <div><div class="brand-title">Парсер прайсов клиник</div><div class="brand-sub">услуги · цены · партнёры · ревью</div></div>
+  <div class="app">
+    <aside class="side">
+      <div class="brand">
+        <div class="brand-main">Price Parser</div>
+        <div class="brand-sub">Case 1 · Clinic archives</div>
       </div>
-    </header>
+      <nav class="nav">
+        <button class="tab tab-active" data-tab="upload">Прайсы</button>
+        <button class="tab" data-tab="partners">Партнёры</button>
+        <button class="tab" data-tab="search">Поиск</button>
+        <button class="tab" data-tab="review">Ревью</button>
+        <button class="tab" data-tab="stats">Статистика</button>
+        <button class="tab" data-tab="catalog">Справочник</button>
+      </nav>
+      <div class="side-foot">Данные сохраняются в подключённой БД/volume. Справочник поднимается автоматически при старте.</div>
+    </aside>
 
-    <nav class="nav">
-      <button class="tab tab-active" data-tab="upload">Прайсы</button>
-      <button class="tab" data-tab="partners">Партнёры</button>
-      <button class="tab" data-tab="search">Поиск</button>
-      <button class="tab" data-tab="review">Ревью</button>
-      <button class="tab" data-tab="stats">Статистика</button>
-      <button class="tab" data-tab="catalog">Справочник</button>
-    </nav>
-
-    <main>
-      <section id="upload" class="panel tab-panel">
-        <div class="panel-head"><div><div class="h1">Загрузка прайсов</div><div class="hint">Клиника и год берутся из имени файла.</div></div><div class="chips"><span class="chip">ZIP</span><span class="chip">PDF</span><span class="chip">DOCX</span><span class="chip">XLSX/XLS</span></div></div>
-        <form id="priceForm">
-          <input id="clinicName" type="hidden" value="Auto">
-          <input id="effectiveDate" type="hidden" value="">
-          <input id="priceFiles" class="hidden-file" type="file" multiple accept=".zip,.pdf,.xlsx,.xls,.csv,.docx,.txt" required>
-          <label for="priceFiles" id="dropZone" class="drop">
-            <div class="drop-icon">↥</div>
-            <div class="h1" style="font-size:24px">Закинуть архив прайсов</div>
-            <div id="filePickHint" class="hint">Нажми сюда или перетащи ZIP/PDF/DOCX/XLSX/XLS</div>
-            <div style="margin-top:18px"><span class="btn">Выбрать файлы</span></div>
-          </label>
-          <button class="btn btn-primary" style="width:100%;margin-top:16px">Запустить парсинг</button>
-        </form>
-        <div id="uploadResult" style="margin-top:18px"></div>
-      </section>
-
-      <section id="partners" class="panel tab-panel" hidden>
-        <div class="panel-head"><div><div class="h1">Партнёры</div><div class="hint">Кликни клинику, чтобы увидеть её услуги и цены.</div></div><button id="refreshPartnersBtn" class="btn btn-soft">Обновить</button></div>
-        <div class="split">
-          <div class="card"><input id="partnerFilter" class="input" placeholder="Фильтр клиник"><div id="partnersList" class="partner-list" style="margin-top:12px"></div></div>
-          <div class="card"><div id="partnerDetails" class="muted">Выбери клинику слева.</div></div>
+    <main class="main">
+      <div class="topline">
+        <div>
+          <div id="pageTitle" class="page-title">Прайсы</div>
+          <div id="pageNote" class="page-note">Загрузка архивов и контроль обработки.</div>
         </div>
+        <div class="top-status"><span class="status-dot"></span><span>online</span></div>
+      </div>
+
+      <section id="upload" class="tab-panel">
+        <section class="panel">
+          <div class="panel-head"><div><div class="h1">Загрузка прайсов</div><div class="hint">Клиника и год определяются из имени файла.</div></div><div class="chips"><span class="chip">ZIP</span><span class="chip">PDF</span><span class="chip">DOCX</span><span class="chip">XLS/XLSX</span></div></div>
+          <form id="priceForm">
+            <input id="clinicName" type="hidden" value="Auto">
+            <input id="effectiveDate" type="hidden" value="">
+            <input id="priceFiles" class="hidden-file" type="file" multiple accept=".zip,.pdf,.xlsx,.xls,.csv,.docx,.txt" required>
+            <label for="priceFiles" id="dropZone" class="drop">
+              <div class="drop-icon">↥</div>
+              <div class="drop-title">Перетащи архив сюда</div>
+              <div id="filePickHint" class="hint">ZIP, PDF, DOCX, XLSX, XLS</div>
+              <div style="margin-top:16px"><span class="btn btn-primary">Выбрать файлы</span></div>
+            </label>
+            <button class="btn" style="width:100%;margin-top:12px">Запустить обработку</button>
+          </form>
+        </section>
+        <section id="uploadResult" class="panel" style="display:none"></section>
       </section>
 
-      <section id="search" class="panel tab-panel" hidden>
-        <div class="panel-head"><div><div class="h1">Поиск цен</div><div class="hint">Показываем только цены партнёров.</div></div></div>
-        <div style="display:flex;gap:12px"><input id="searchInput" class="input" placeholder="Например: УЗИ"><button id="searchBtn" class="btn btn-primary">Искать</button></div>
-        <div id="searchResult" style="margin-top:18px"></div>
+      <section id="partners" class="tab-panel" hidden>
+        <section class="panel">
+          <div class="panel-head"><div><div class="h1">Партнёры</div><div class="hint">Клиники из загруженных прайсов.</div></div><button id="refreshPartnersBtn" class="btn btn-soft">Обновить</button></div>
+          <div class="split">
+            <div><input id="partnerFilter" class="input" placeholder="Найти клинику"><div id="partnersList" class="partner-list" style="margin-top:10px"></div></div>
+            <div id="partnerDetails" class="card muted">Выбери клинику слева.</div>
+          </div>
+        </section>
       </section>
 
-      <section id="review" class="panel tab-panel" hidden>
-        <div class="panel-head"><div><div class="h1">Ревью</div><div class="hint">Unmatched, low-confidence, low-price.</div></div><button id="loadReviewBtn" class="btn btn-soft">Обновить</button></div>
-        <div class="grid-3" style="margin-bottom:12px"><input id="reviewClinicFilter" class="input" placeholder="Клиника"><input id="reviewMaxConfidence" class="input" type="number" placeholder="Match до %"><label class="card" style="padding:13px 16px"><input id="reviewLowOnly" type="checkbox"> low price</label></div>
-        <div class="grid-2" style="margin-bottom:12px"><input id="reviewServiceSearch" class="input" placeholder="Услуга справочника"><button id="reviewServiceBtn" class="btn">Найти match</button></div>
-        <select id="reviewServiceSelect" class="input" style="margin-bottom:14px"></select>
-        <div id="reviewResult"></div>
+      <section id="search" class="tab-panel" hidden>
+        <section class="panel">
+          <div class="panel-head"><div><div class="h1">Поиск цен</div><div class="hint">Поиск по позициям прайсов.</div></div></div>
+          <div class="search-row"><input id="searchInput" class="input" placeholder="Например: УЗИ"><button id="searchBtn" class="btn btn-primary">Искать</button></div>
+          <div id="searchResult" style="margin-top:14px"></div>
+        </section>
       </section>
 
-      <section id="stats" class="panel tab-panel" hidden>
-        <div class="panel-head"><div><div class="h1">Статистика</div><div class="hint">Текущие данные в БД.</div></div><button id="refreshStatsBtn" class="btn btn-soft">Обновить</button></div>
-        <div id="kpi" class="grid-3"></div>
+      <section id="review" class="tab-panel" hidden>
+        <section class="panel">
+          <div class="panel-head"><div><div class="h1">Ревью</div><div class="hint">Позиции с низкой уверенностью или подозрительной ценой.</div></div><button id="loadReviewBtn" class="btn btn-soft">Обновить</button></div>
+          <div class="review-tools"><input id="reviewClinicFilter" class="input" placeholder="Клиника"><input id="reviewMaxConfidence" class="input" type="number" placeholder="Match до %"><label class="card" style="padding:10px 12px"><input id="reviewLowOnly" type="checkbox"> low price</label></div>
+          <div class="search-row" style="margin-bottom:10px"><input id="reviewServiceSearch" class="input" placeholder="Услуга справочника"><button id="reviewServiceBtn" class="btn">Найти match</button></div>
+          <select id="reviewServiceSelect" class="input" style="margin-bottom:12px"></select>
+          <div id="reviewResult"></div>
+        </section>
       </section>
 
-      <section id="catalog" class="panel tab-panel" hidden>
-        <div class="panel-head"><div><div class="h1">Справочник</div><div class="hint">Автозагружается при старте, ручной импорт оставлен как fallback.</div></div><button id="bootstrapBtn" class="btn btn-soft">Проверить автозагрузку</button></div>
-        <form id="catalogForm" class="grid-2"><input id="catalogFile" class="input" type="file" accept=".xlsx,.csv,.json"><button class="btn">Импортировать файл</button></form>
-        <pre id="catalogResult" style="margin-top:16px;display:none;background:#0f172a;color:#e2e8f0;border-radius:18px;padding:16px;overflow:auto;font-size:12px"></pre>
+      <section id="stats" class="tab-panel" hidden>
+        <section class="panel">
+          <div class="panel-head"><div><div class="h1">Статистика</div><div class="hint">Состояние базы.</div></div><button id="refreshStatsBtn" class="btn btn-soft">Обновить</button></div>
+          <div id="kpi" class="grid-3"></div>
+        </section>
+      </section>
+
+      <section id="catalog" class="tab-panel" hidden>
+        <section class="panel">
+          <div class="panel-head"><div><div class="h1">Справочник</div><div class="hint">Автозагрузка при старте. Ручной импорт — резерв.</div></div><button id="bootstrapBtn" class="btn btn-soft">Проверить</button></div>
+          <form id="catalogForm" class="search-row"><input id="catalogFile" class="input" type="file" accept=".xlsx,.csv,.json"><button class="btn">Импортировать</button></form>
+          <pre id="catalogResult" style="margin-top:14px;display:none;background:#111827;color:#e5e7eb;border-radius:12px;padding:14px;overflow:auto;font-size:12px"></pre>
+        </section>
       </section>
     </main>
   </div>
