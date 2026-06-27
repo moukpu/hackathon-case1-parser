@@ -23,7 +23,7 @@
     const maxConfidence = Number($('reviewMaxConfidence')?.value || '');
     const lowOnly = Boolean($('reviewLowOnly')?.checked);
 
-    const cards = Array.from(box.querySelectorAll('.bg-white\/80.rounded-2xl.border'));
+    const cards = Array.from(box.children).filter((el) => el.className && String(el.className).includes('rounded-2xl'));
     let visible = 0;
 
     for (const card of cards) {
