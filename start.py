@@ -3,6 +3,7 @@ import os
 import uvicorn
 
 # Registers optional API routes without touching backend/main.py.
+import backend.auth_routes  # noqa: F401,E402
 import backend.export_routes  # noqa: F401,E402
 import backend.job_state  # noqa: F401,E402
 import backend.db_info  # noqa: F401,E402
