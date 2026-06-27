@@ -23,6 +23,17 @@ async function readResponseSafely(res) {
   catch { return { detail: text }; }
 }
 
+function uiEsc(value) {
+  return String(value ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+}
+
+function formatHistoryDate(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value).slice(0, 16);
+  return d.toLocaleString('ru-RU', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' });
+}
+
 clearBtn?.addEventListener('click', async () => {
   if (currentUploadLooksActive()) {
     if (clearResult) {
@@ -53,6 +64,7 @@ clearBtn?.addEventListener('click', async () => {
 
     localStorage.removeItem('lastJobId');
     if (typeof refreshStats === 'function') refreshStats();
+    if (typeof loadUploadHistory === 'function') loadUploadHistory();
     const uploadResult = document.getElementById('uploadResult');
     if (uploadResult) {
       uploadResult.style.display = 'none';
@@ -75,19 +87,38 @@ function ensureExportStyles() {
     .export-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:flex-end}
     .export-actions .btn{height:36px;padding:0 14px}
     .export-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 16px;padding:12px 14px;background:#f4f1ed;border:1px solid #e5e0d8;border-radius:8px}
-    @media(max-width:768px){.export-row{align-items:flex-start;flex-direction:column}.export-actions{justify-content:flex-start}}
+    .history-panel{margin-top:24px}.history-files{font-size:13px;color:var(--secondary);margin-top:6px}.history-actions{display:flex;gap:8px;flex-wrap:wrap}.history-row-main{font-weight:600}.history-muted{color:var(--secondary);font-size:13px}
+    @media(max-width:768px){.export-row{align-items:flex-start;flex-direction:column}.export-actions,.history-actions{justify-content:flex-start}}
   `;
   document.head.appendChild(style);
 }
 
-function downloadExport(url) {
-  const link = document.createElement('a');
-  link.href = url;
-  link.rel = 'noopener';
-  link.style.display = 'none';
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+async function downloadExport(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      const data = await readResponseSafely(res);
+      const detail = typeof data.detail === 'string' ? data.detail : 'Экспорт пока недоступен для этой обработки';
+      alert(detail);
+      return;
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^";]+)"?/i);
+    const filename = match ? match[1] : 'export';
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = filename;
+    link.rel = 'noopener';
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(href);
+  } catch (e) {
+    alert(String(e.message || e));
+  }
 }
 
 function createExportActions(buttons) {
@@ -154,7 +185,7 @@ function ensurePartnerExportButtons() {
   ]));
 }
 
-function injectJobExportButtons(jobId) {
+function injectJobExportButtons(jobId, job) {
   const root = document.getElementById('uploadResult');
   const metrics = root?.querySelector('.job-metrics');
   if (!root || !metrics || !jobId) return;
@@ -162,11 +193,14 @@ function injectJobExportButtons(jobId) {
   if (old) old.remove();
   const row = document.createElement('div');
   row.className = 'export-row job-export-row';
-  row.innerHTML = '<div><b>Экспорт job</b><div class="hint">Скачивание текущего результата обработки.</div></div>';
-  row.appendChild(createExportActions([
-    { label: 'CSV', onClick: () => downloadExport('/api/export/jobs/' + encodeURIComponent(jobId) + '.csv') },
-    { label: 'XLSX', onClick: () => downloadExport('/api/export/jobs/' + encodeURIComponent(jobId) + '.xlsx') },
-  ]));
+  const ready = !['queued', 'processing'].includes(job?.status || '');
+  row.innerHTML = `<div><b>Экспорт обработки</b><div class="hint">${ready ? 'Скачать результат текущей обработки.' : 'Будет доступен после завершения.'}</div></div>`;
+  if (ready) {
+    row.appendChild(createExportActions([
+      { label: 'CSV', onClick: () => downloadExport('/api/export/jobs/' + encodeURIComponent(jobId) + '.csv') },
+      { label: 'XLSX', onClick: () => downloadExport('/api/export/jobs/' + encodeURIComponent(jobId) + '.xlsx') },
+    ]));
+  }
   metrics.insertAdjacentElement('afterend', row);
 }
 
@@ -176,7 +210,10 @@ function wrapRenderJobForExport() {
   renderJob = function(job, keepScroll = true) {
     const result = originalRenderJob.call(this, job, keepScroll);
     if (job?.job_id) localStorage.setItem('lastJobId', job.job_id);
-    injectJobExportButtons(job?.job_id);
+    injectJobExportButtons(job?.job_id, job);
+    if (job && !['queued', 'processing'].includes(job.status || '') && typeof loadUploadHistory === 'function') {
+      loadUploadHistory();
+    }
     return result;
   };
   window.__renderJobExportWrapped = true;
@@ -200,10 +237,55 @@ async function restoreLatestJob() {
   if (!lastJobId) return;
   try {
     const job = await api('/api/jobs/' + encodeURIComponent(lastJobId));
+    if (!job?.job_id || job.total_files === 0) {
+      localStorage.removeItem('lastJobId');
+      return;
+    }
     renderJob(job, false);
     if (['queued', 'processing'].includes(job.status) && typeof pollJob === 'function') pollJob(job.job_id);
   } catch (_) {
     localStorage.removeItem('lastJobId');
+  }
+}
+
+function historyBadge(status, label) {
+  const cls = status === 'done' ? 'ok' : (status === 'error' || status === 'finished_with_errors' || status === 'interrupted') ? 'bad' : 'warn';
+  return `<span class="badge ${cls}">${uiEsc(label || status)}</span>`;
+}
+
+function ensureUploadHistoryPanel() {
+  const upload = document.getElementById('upload');
+  if (!upload || document.getElementById('uploadHistoryPanel')) return;
+  upload.insertAdjacentHTML('beforeend', `
+    <section id="uploadHistoryPanel" class="panel history-panel">
+      <div class="panel-head"><div><h2 class="h1">История загрузок</h2><p class="hint">Прошлые обработки текущего аккаунта.</p></div><button id="refreshHistoryBtn" class="btn btn-soft">Обновить</button></div>
+      <div id="uploadHistoryList"><div class="hint">Загрузка истории...</div></div>
+    </section>
+  `);
+  document.getElementById('refreshHistoryBtn')?.addEventListener('click', loadUploadHistory);
+}
+
+async function loadUploadHistory() {
+  const box = document.getElementById('uploadHistoryList');
+  if (!box) return;
+  box.innerHTML = '<div class="hint">Загрузка истории...</div>';
+  try {
+    const rows = await api('/api/upload-history');
+    if (!Array.isArray(rows) || !rows.length) {
+      box.innerHTML = '<div class="hint">История пока пустая. Загрузи первый прайс.</div>';
+      return;
+    }
+    box.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Дата</th><th>Клиника</th><th>Файлы</th><th>Услуг</th><th>Ревью</th><th>Статус</th><th>Экспорт</th></tr></thead><tbody>${rows.map(row => {
+      const files = (row.files || []).slice(0, 3).map(f => uiEsc(f.file_name)).join('<br/>');
+      const more = (row.files || []).length > 3 ? `<div class="history-muted">+${(row.files || []).length - 3} ещё</div>` : '';
+      const actions = row.exportable && row.job_id ? `<div class="history-actions"><button class="btn btn-soft" data-export-job="${uiEsc(row.job_id)}" data-format="csv">CSV</button><button class="btn btn-soft" data-export-job="${uiEsc(row.job_id)}" data-format="xlsx">XLSX</button></div>` : '<span class="history-muted">старый импорт</span>';
+      return `<tr><td>${formatHistoryDate(row.created_at)}</td><td><div class="history-row-main">${uiEsc(row.clinic_name || '—')}</div></td><td>${files || '—'}${more}</td><td>${row.items_found || 0}</td><td>${row.needs_review || 0}</td><td>${historyBadge(row.status, row.display_status)}</td><td>${actions}</td></tr>`;
+    }).join('')}</tbody></table></div>`;
+    box.querySelectorAll('[data-export-job]').forEach(btn => btn.addEventListener('click', () => {
+      downloadExport('/api/export/jobs/' + encodeURIComponent(btn.dataset.exportJob) + '.' + btn.dataset.format);
+    }));
+  } catch (e) {
+    box.innerHTML = `<div class="card"><span class="badge bad">ошибка</span><div class="hint" style="margin-top:10px">${uiEsc(e.message || e)}</div></div>`;
   }
 }
 
@@ -212,8 +294,10 @@ function initExportUi() {
   ensureSearchExportButtons();
   ensureReviewExportButtons();
   ensurePartnerExportButtons();
+  ensureUploadHistoryPanel();
   wrapRenderJobForExport();
   restoreLatestJob();
+  loadUploadHistory();
 
   const partnerDetails = document.getElementById('partnerDetails');
   if (partnerDetails && !partnerDetails.dataset.exportObserved) {
