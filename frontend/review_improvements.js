@@ -22,16 +22,21 @@ function reviewMatchesReason(item, reason) {
   return true;
 }
 
+function hideLegacyReviewManualControls() {
+  document.querySelector('.review-match')?.remove();
+  document.querySelector('.review-apply')?.remove();
+  const searchRow = document.getElementById('reviewServiceSearch')?.closest('.search-row');
+  const applyRow = document.getElementById('reviewServiceSelect')?.closest('.search-row');
+  searchRow?.remove();
+  applyRow?.remove();
+}
+
 function clearReviewSelection(message = 'Позиция не выбрана.') {
   selectedReviewItemId = null;
   const selected = document.getElementById('reviewSelected');
   if (selected) selected.innerHTML = message;
   const candidates = document.getElementById('reviewCandidates');
   if (candidates) candidates.innerHTML = '<b>Кандидаты появятся после выбора строки</b><div class="hint">Система предложит топ-5 услуг из справочника.</div>';
-  const search = document.getElementById('reviewServiceSearch');
-  if (search) search.value = '';
-  const select = document.getElementById('reviewServiceSelect');
-  if (select) select.innerHTML = '';
 }
 
 async function applyReviewService(serviceId) {
@@ -88,7 +93,7 @@ async function loadReviewCandidates(itemId) {
     const data = await api('/api/review/items/' + encodeURIComponent(itemId) + '/candidates');
     const candidates = data.candidates || [];
     if (!candidates.length) {
-      box.innerHTML = '<b>Кандидаты не найдены</b><div class="hint">Попробуй ручной поиск ниже.</div>';
+      box.innerHTML = '<b>Кандидаты не найдены</b><div class="hint">Нет уверенных вариантов в справочнике.</div>';
       return;
     }
     box.innerHTML = `<div class="review-candidates-head"><b>Топ-5 кандидатов</b><span class="hint">Выбери лучший match</span></div><div class="review-candidate-list">${candidates.map(c => `
@@ -108,9 +113,9 @@ function patchReviewUi() {
   if (typeof loadUnmatched !== 'function' || typeof renderReviewList !== 'function' || typeof selectReviewItem !== 'function') return;
 
   const originalLoadUnmatched = loadUnmatched;
-  const originalSearchReviewServices = typeof searchReviewServices === 'function' ? searchReviewServices : null;
 
   loadUnmatched = async function() {
+    hideLegacyReviewManualControls();
     const box = document.getElementById('reviewResult');
     if (box) box.innerHTML = '<div class="hint">Загрузка ревью...</div>';
     try {
@@ -125,6 +130,7 @@ function patchReviewUi() {
   };
 
   renderReviewList = function() {
+    hideLegacyReviewManualControls();
     renderReviewFilterButtons();
     ensureReviewCandidateBox();
     const q = document.getElementById('reviewClinicFilter')?.value || '';
@@ -140,23 +146,14 @@ function patchReviewUi() {
   };
 
   selectReviewItem = function(id) {
+    hideLegacyReviewManualControls();
     selectedReviewItemId = id;
     const item = (lastReviewItems || []).find(i => i.item_id === id);
     const selected = document.getElementById('reviewSelected');
     if (selected) selected.innerHTML = item ? `Выбрано: <b>${reviewUiEsc(item.original_name)}</b> · ${money(item.price_resident_kzt)} · ${reviewUiEsc(item.clinic_name)} · ${reviewUiEsc(reviewReasonLabel(item))}` : 'Позиция не выбрана.';
-    const search = document.getElementById('reviewServiceSearch');
-    if (item && search) search.value = item.original_name;
     renderReviewList();
     loadReviewCandidates(id);
-    if (originalSearchReviewServices) originalSearchReviewServices();
   };
-
-  if (typeof applyReviewMatch === 'function') {
-    applyReviewMatch = async function() {
-      const serviceId = document.getElementById('reviewServiceSelect')?.value;
-      await applyReviewService(serviceId);
-    };
-  }
 
   window.__reviewImprovementsReady = true;
 }
@@ -166,6 +163,7 @@ function ensureReviewImprovementsStyles() {
   const style = document.createElement('style');
   style.id = 'reviewImprovementsStyles';
   style.textContent = `
+    .review-match,.review-apply,#reviewServiceSearch,#reviewServiceBtn,#reviewServiceSelect,#applyReviewMatchBtn{display:none!important}
     .review-filter-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.review-filter-row .btn{height:34px;padding:0 12px}.review-filter-row .btn.active{background:var(--primary-container);color:var(--on-primary)}
     .review-candidates{margin-bottom:12px}.review-candidates-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:10px}.review-candidate-list{display:grid;gap:8px}.review-candidate{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;border:1px solid #e5e0d8;border-radius:6px;padding:10px;background:#f9f8f6}.review-candidate .btn{height:34px;padding:0 12px}
     @media(max-width:768px){.review-candidate{grid-template-columns:1fr}.review-candidates-head{display:block}}
@@ -175,6 +173,7 @@ function ensureReviewImprovementsStyles() {
 
 function initReviewImprovements() {
   ensureReviewImprovementsStyles();
+  hideLegacyReviewManualControls();
   patchReviewUi();
   renderReviewFilterButtons();
   ensureReviewCandidateBox();
