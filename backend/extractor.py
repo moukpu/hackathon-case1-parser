@@ -34,6 +34,25 @@ def _clean_archive_root(value: str) -> str:
     return re.sub(r"\s+", " ", text).strip(" ._-–—").lower()
 
 
+def _clean_display_filename(path: str) -> str:
+    """Normalize display path while keeping the price year visible.
+
+    `Клиника 2 прайс 2025 год.PDF` -> `Клиника 2 прайс 2025.PDF`.
+    This keeps `2025` for the UI, but prevents partner inference from returning
+    `Клиника 2 год` after it removes `прайс` and the numeric year.
+    """
+    p = PurePosixPath(path)
+    stem = p.stem
+    suffix = p.suffix
+    stem = re.sub(r"(?i)\b(20\d{2})\s*год\b", r"\1", stem)
+    stem = re.sub(r"(?i)\bгод\b", " ", stem)
+    stem = re.sub(r"\s+", " ", stem).strip(" ._-–—")
+    cleaned_name = f"{stem}{suffix}"
+    if p.parent == PurePosixPath("."):
+        return cleaned_name
+    return str(p.parent / cleaned_name)
+
+
 def _strip_generic_zip_root(zip_filename: str, inner_paths: list[str]) -> dict[str, str]:
     """Remove one common technical root folder from ZIP paths.
 
@@ -46,19 +65,19 @@ def _strip_generic_zip_root(zip_filename: str, inner_paths: list[str]) -> dict[s
 
     split_paths = [p.split("/") for p in inner_paths]
     if not all(len(parts) > 1 for parts in split_paths):
-        return {p: p for p in inner_paths}
+        return {p: _clean_display_filename(p) for p in inner_paths}
 
     first_root = split_paths[0][0]
     if not all(parts[0] == first_root for parts in split_paths):
-        return {p: p for p in inner_paths}
+        return {p: _clean_display_filename(p) for p in inner_paths}
 
     clean_root = _clean_archive_root(first_root)
     clean_zip = _clean_archive_root(PurePosixPath(zip_filename or "").stem)
     should_strip = clean_root in GENERIC_ZIP_ROOTS or clean_root == clean_zip
     if not should_strip:
-        return {p: p for p in inner_paths}
+        return {p: _clean_display_filename(p) for p in inner_paths}
 
-    return {p: str(PurePosixPath(*p.split("/")[1:])) for p in inner_paths}
+    return {p: _clean_display_filename(str(PurePosixPath(*p.split("/")[1:]))) for p in inner_paths}
 
 
 def iter_input_files(filename: str, file_bytes: bytes) -> Iterable[Tuple[str, bytes]]:
@@ -83,9 +102,9 @@ def iter_input_files(filename: str, file_bytes: bytes) -> Iterable[Tuple[str, by
 
             display_paths = _strip_generic_zip_root(filename, [inner for inner, _ in entries])
             for inner_path, archive_name in entries:
-                yield display_paths.get(inner_path, inner_path), archive.read(archive_name)
+                yield display_paths.get(inner_path, _clean_display_filename(inner_path)), archive.read(archive_name)
     else:
-        yield filename, file_bytes
+        yield _clean_display_filename(filename), file_bytes
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
