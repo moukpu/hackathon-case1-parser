@@ -43,6 +43,7 @@ clearBtn?.addEventListener('click', async () => {
       clearResult.innerHTML = `<div class="card"><span class="badge ok">готово</span><div style="margin-top:10px"><b>Прайсы очищены</b></div><div class="hint">Удалено позиций: ${data.deleted_price_items || 0}, документов: ${data.deleted_documents || 0}, партнёров: ${data.deleted_partners || 0}. Справочник сохранён: ${data.services || 0} услуг.</div></div>`;
     }
 
+    localStorage.removeItem('lastJobId');
     if (typeof refreshStats === 'function') refreshStats();
     const uploadResult = document.getElementById('uploadResult');
     if (uploadResult) {
@@ -72,7 +73,13 @@ function ensureExportStyles() {
 }
 
 function downloadExport(url) {
-  window.location.assign(url);
+  const link = document.createElement('a');
+  link.href = url;
+  link.rel = 'noopener';
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 function createExportActions(buttons) {
@@ -160,10 +167,36 @@ function wrapRenderJobForExport() {
   const originalRenderJob = renderJob;
   renderJob = function(job, keepScroll = true) {
     const result = originalRenderJob.call(this, job, keepScroll);
+    if (job?.job_id) localStorage.setItem('lastJobId', job.job_id);
     injectJobExportButtons(job?.job_id);
     return result;
   };
   window.__renderJobExportWrapped = true;
+}
+
+async function restoreLatestJob() {
+  if (typeof api !== 'function' || typeof renderJob !== 'function') return;
+  const uploadResult = document.getElementById('uploadResult');
+  if (uploadResult?.textContent?.trim()) return;
+  try {
+    const activeJobs = await api('/api/jobs?status=active&limit=1');
+    const activeJob = Array.isArray(activeJobs) ? activeJobs[0] : null;
+    if (activeJob?.job_id) {
+      renderJob(activeJob, false);
+      if (typeof pollJob === 'function') pollJob(activeJob.job_id);
+      return;
+    }
+  } catch (_) {}
+
+  const lastJobId = localStorage.getItem('lastJobId');
+  if (!lastJobId) return;
+  try {
+    const job = await api('/api/jobs/' + encodeURIComponent(lastJobId));
+    renderJob(job, false);
+    if (['queued', 'processing'].includes(job.status) && typeof pollJob === 'function') pollJob(job.job_id);
+  } catch (_) {
+    localStorage.removeItem('lastJobId');
+  }
 }
 
 function initExportUi() {
@@ -172,6 +205,7 @@ function initExportUi() {
   ensureReviewExportButtons();
   ensurePartnerExportButtons();
   wrapRenderJobForExport();
+  restoreLatestJob();
 
   const partnerDetails = document.getElementById('partnerDetails');
   if (partnerDetails && !partnerDetails.dataset.exportObserved) {
