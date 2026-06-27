@@ -72,6 +72,7 @@ async function initAuthUi() {
   ensureAuthStyles();
   loadExtraScript('catalogCleanScript', '/frontend/catalog_clean.js');
   loadExtraScript('jobPollFixScript', '/frontend/job_poll_fix.js');
+  loadExtraScript('clearOverrideScript', '/frontend/clear_override.js');
   try {
     const res = await fetch('/api/auth/me');
     if (!res.ok) throw new Error('noauth');
