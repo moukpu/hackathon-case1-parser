@@ -48,7 +48,7 @@ async function applyReviewService(serviceId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ item_id: selectedReviewItemId, service_id: serviceId }),
     });
-    clearReviewSelection('<span class="badge ok">готово</span><div class="hint" style="margin-top:8px">Match применён. Строка ушла из ревью.</div>');
+    clearReviewSelection('<span class="badge ok">готово</span><div class="hint" style="margin-top:8px">Совпадение применено. Строка ушла из ревью.</div>');
     if (typeof loadUnmatched === 'function') await loadUnmatched();
     if (typeof refreshStats === 'function') refreshStats();
   } catch (e) {
@@ -69,7 +69,7 @@ function renderReviewFilterButtons() {
     <div id="reviewReasonFilters" class="review-filter-row">
       <button class="btn btn-soft active" type="button" data-review-reason="all">Все</button>
       <button class="btn btn-soft" type="button" data-review-reason="low_price">Низкая цена</button>
-      <button class="btn btn-soft" type="button" data-review-reason="no_match">Нет match</button>
+      <button class="btn btn-soft" type="button" data-review-reason="no_match">Нет совпадения</button>
       <button class="btn btn-soft" type="button" data-review-reason="low_confidence">Низкая уверенность</button>
     </div>
   `);
@@ -96,7 +96,7 @@ async function loadReviewCandidates(itemId) {
       box.innerHTML = '<b>Кандидаты не найдены</b><div class="hint">Нет уверенных вариантов в справочнике.</div>';
       return;
     }
-    box.innerHTML = `<div class="review-candidates-head"><b>Топ-5 кандидатов</b><span class="hint">Выбери лучший match</span></div><div class="review-candidate-list">${candidates.map(c => `
+    box.innerHTML = `<div class="review-candidates-head"><b>Топ-5 кандидатов</b><span class="hint">Выбери лучшее совпадение</span></div><div class="review-candidate-list">${candidates.map(c => `
       <div class="review-candidate">
         <div><b>${reviewUiEsc(c.service_name)}</b><div class="hint">${reviewUiEsc(c.category || 'категория не указана')} · ${c.score || 0}%</div></div>
         <button class="btn btn-primary" type="button" data-apply-candidate="${reviewUiEsc(c.service_id)}">Применить</button>
@@ -141,7 +141,7 @@ function patchReviewUi() {
     }
     const target = document.getElementById('reviewResult');
     if (!target) return;
-    target.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Клиника</th><th>Исходная строка</th><th>Цена</th><th>Match</th><th>Причина</th></tr></thead><tbody>${rows.map(i => `<tr class="review-row ${i.item_id===selectedReviewItemId?'selected':''}" data-item-id="${reviewUiEsc(i.item_id)}"><td>${reviewUiEsc(i.clinic_name)}</td><td>${reviewUiEsc(i.original_name)}</td><td>${money(i.price_resident_kzt)}</td><td>${i.confidence ?? 0}%</td><td>${reviewUiEsc(reviewReasonLabel(i))}</td></tr>`).join('')}</tbody></table></div>`;
+    target.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Клиника</th><th>Исходная строка</th><th>Цена</th><th>Совпадение</th><th>Причина</th></tr></thead><tbody>${rows.map(i => `<tr class="review-row ${i.item_id===selectedReviewItemId?'selected':''}" data-item-id="${reviewUiEsc(i.item_id)}"><td>${reviewUiEsc(i.clinic_name)}</td><td>${reviewUiEsc(i.original_name)}</td><td>${money(i.price_resident_kzt)}</td><td>${i.confidence ?? 0}%</td><td>${reviewUiEsc(reviewReasonLabel(i))}</td></tr>`).join('')}</tbody></table></div>`;
     target.querySelectorAll('.review-row').forEach(row => row.addEventListener('click', () => selectReviewItem(row.dataset.itemId)));
   };
 
