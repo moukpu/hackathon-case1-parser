@@ -11,6 +11,19 @@ ORIGINAL_SET_JOB = main.set_job
 ORIGINAL_SET_JOB_FILE = main.set_job_file
 
 
+class PersistentJobs(dict):
+    def clear(self) -> None:
+        super().clear()
+        try:
+            JOB_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            JOB_STATE_PATH.write_text("[]", encoding="utf-8")
+        except Exception:
+            pass
+
+
+main.JOBS = PersistentJobs(main.JOBS)
+
+
 def _job_is_active(job: dict) -> bool:
     return job.get("status") in main.ACTIVE_JOB_STATUSES
 
