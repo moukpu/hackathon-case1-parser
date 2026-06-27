@@ -25,6 +25,17 @@ def normalize_text(value: str | None) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def clean_code(value: Any) -> str | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "null", "-"}:
+        return None
+    if re.fullmatch(r"\d+\.0", text):
+        text = text[:-2]
+    return text
+
+
 def parse_synonyms(value: Any) -> list[str]:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return []
@@ -84,21 +95,22 @@ def import_service_catalog(db: Session, file_name: str, file_bytes: bytes) -> di
             skipped += 1
             continue
 
-        source_code = first_present(row, ["service_id", "ID", "id", "Code", "code"])
+        # Important: in the organizer catalog, generic ID is specialty/group id and repeats.
+        # The unique service code is the Code column. Do not use ID as source_code.
+        source_code = clean_code(first_present(row, ["Code", "code", "service_code", "source_code", "Код", "Код услуги"]))
+        if not source_code:
+            source_code = clean_code(first_present(row, ["service_id", "serviceId", "serviceID"]))
+
         category = first_present(row, ["category", "Категория", "Специальность", "Specialty"])
-        tarificatr_code = first_present(row, ["TarificatrCode", "tarificatr_code", "Тарификатор"])
+        tarificatr_code = clean_code(first_present(row, ["TarificatrCode", "tarificatr_code", "Тарификатор", "Код тарификатора"]));
         synonyms = parse_synonyms(first_present(row, ["synonyms", "Синонимы", "aliases", "Альтернативные названия"]))
 
-        source_code = str(source_code).strip() if source_code else None
         category = str(category).strip() if category else None
-        tarificatr_code = str(tarificatr_code).strip() if tarificatr_code else None
         service_name = str(service_name).strip()
 
         service = None
         if source_code:
             service = db.query(Service).filter(Service.source_code == source_code).first()
-        if service is None and tarificatr_code:
-            service = db.query(Service).filter(Service.tarificatr_code == tarificatr_code).first()
         if service is None:
             service = (
                 db.query(Service)
@@ -155,14 +167,15 @@ def match_service(
         return MatchResult(None, 0, "empty", True)
 
     if code_hint:
-        code = str(code_hint).strip()
-        service = (
-            db.query(Service)
-            .filter(or_(Service.source_code == code, Service.tarificatr_code == code))
-            .first()
-        )
-        if service:
-            return MatchResult(service, 100, "code_exact", False)
+        code = clean_code(code_hint)
+        if code:
+            service = (
+                db.query(Service)
+                .filter(or_(Service.source_code == code, Service.tarificatr_code == code))
+                .first()
+            )
+            if service:
+                return MatchResult(service, 100, "code_exact", False)
 
     services = db.query(Service).filter(Service.is_active == True).all()  # noqa: E712
     if not services:
@@ -180,9 +193,13 @@ def match_service(
     choices: dict[str, Service] = {}
     for service in services:
         base = f"{service.service_name} {service.category or ''} {service.source_code or ''} {service.tarificatr_code or ''}"
-        choices[normalize_text(base)] = service
+        normalized_base = normalize_text(base)
+        if normalized_base:
+            choices[normalized_base] = service
         for synonym in service.synonyms:
-            choices[normalize_text(f"{synonym} {service.category or ''}")] = service
+            normalized_synonym = normalize_text(f"{synonym} {service.category or ''}")
+            if normalized_synonym:
+                choices[normalized_synonym] = service
 
     if not choices:
         return MatchResult(None, 0, "no_choices", True)
