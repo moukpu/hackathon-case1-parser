@@ -27,9 +27,7 @@ function showJson(el, data) {
 async function refreshStats() {
   try {
     const s = await api('/api/stats');
-    const cards = [
-      ['Партнёры', s.partners], ['Справочник', s.services], ['Документы', s.documents], ['Позиции', s.price_items], ['На ревью', s.needs_review]
-    ];
+    const cards = [['Партнёры', s.partners], ['Справочник', s.services], ['Документы', s.documents], ['Позиции', s.price_items], ['На ревью', s.needs_review]];
     $('kpi').innerHTML = cards.map(([label, value]) => `<div class="glass rounded-3xl p-5 shadow-sm"><div class="text-xs font-bold uppercase tracking-wide text-slate-400">${label}</div><div class="text-3xl font-extrabold text-slate-950 mt-1">${value ?? 0}</div></div>`).join('');
   } catch (e) {
     $('kpi').innerHTML = `<div class="col-span-full bg-red-50 border border-red-100 text-red-700 rounded-2xl p-4">Stats error: ${esc(e.message)}</div>`;
@@ -106,34 +104,55 @@ async function pollJob(jobId) {
 
 function statusBadge(status) {
   if (status === 'done') return '<span class="text-emerald-600 font-bold">done</span>';
-  if (status === 'needs_review') return '<span class="text-amber-600 font-bold">review</span>';
+  if (status === 'needs_review') return '<span class="text-emerald-600 font-bold">done</span><span class="ml-2 text-xs text-amber-600 font-bold">has review</span>';
   if (status === 'processing') return '<span class="text-indigo-600 font-bold">processing...</span>';
   if (status === 'pending') return '<span class="text-slate-500 font-bold">pending</span>';
   if (status === 'error') return '<span class="text-red-600 font-bold">error</span>';
   return `<span class="text-slate-500 font-bold">${esc(status || '—')}</span>`;
 }
 
+function itemStatus(item) {
+  if (item.needs_review) return '<span class="text-amber-600 font-bold">review</span>';
+  if (Number(item.price) > 0 && Number(item.price) < 500) return '<span class="text-amber-600 font-bold">low price?</span>';
+  return '<span class="text-emerald-600 font-bold">ok</span>';
+}
+
 function progressText(job) {
   return `${job.processed_files || 0}/${job.total_files || 0} файлов · ${job.items_found || 0} услуг · ${job.needs_review || 0} на ревью`;
 }
 
+function uniquePreviewItems(items) {
+  const seen = new Set();
+  const out = [];
+  for (const item of items || []) {
+    const key = `${item.clinic_name}|${item.standardized_name || item.original_name}|${item.price}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+    if (out.length >= 200) break;
+  }
+  return out;
+}
+
 function renderJob(job) {
   const docs = job.documents || [];
-  const docRows = docs.map(doc => `<tr class="border-t border-slate-100 align-top"><td class="px-4 py-3 font-medium">${esc(doc.clinic_name || '—')}</td><td class="px-4 py-3 max-w-xl break-all">${esc(doc.file_name || '—')}</td><td class="px-4 py-3">${statusBadge(doc.status)}</td><td class="px-4 py-3">${doc.items ?? 0}</td><td class="px-4 py-3 text-red-600 text-xs">${esc(doc.error || '')}</td></tr>`).join('');
-  const rows = (job.data || []).slice(0, 200).map(item => `<tr class="border-t border-slate-100"><td class="px-4 py-3 font-medium">${esc(item.standardized_name || item.original_name)}</td><td class="px-4 py-3">${money(item.price)}</td><td class="px-4 py-3">${esc(item.category || '—')}</td><td class="px-4 py-3">${esc(item.confidence)}%</td><td class="px-4 py-3">${item.needs_review ? '<span class="text-amber-600 font-bold">review</span>' : '<span class="text-emerald-600 font-bold">ok</span>'}</td></tr>`).join('');
+  const docRows = docs.map(doc => `<tr class="border-t border-slate-100 align-top"><td class="px-4 py-3 font-medium">${esc(doc.clinic_name || '—')}</td><td class="px-4 py-3 max-w-xl break-all">${esc(doc.file_name || '—')}</td><td class="px-4 py-3">${statusBadge(doc.status)}</td><td class="px-4 py-3">${doc.items ?? 0}</td><td class="px-4 py-3 text-amber-600 font-bold">${doc.review_items ?? 0}</td><td class="px-4 py-3 text-red-600 text-xs">${esc(doc.error || '')}</td></tr>`).join('');
+  const previewItems = uniquePreviewItems(job.data || []);
+  const rows = previewItems.map(item => `<tr class="border-t border-slate-100 ${Number(item.price) > 0 && Number(item.price) < 500 ? 'bg-amber-50/40' : ''}"><td class="px-4 py-3 font-medium">${esc(item.clinic_name || '—')}</td><td class="px-4 py-3 font-medium">${esc(item.standardized_name || item.original_name)}</td><td class="px-4 py-3">${money(item.price)}</td><td class="px-4 py-3">${esc(item.category || '—')}</td><td class="px-4 py-3">${esc(item.confidence)}%</td><td class="px-4 py-3">${itemStatus(item)}</td></tr>`).join('');
   const partners = (job.partners_detected || []).join(', ');
   const activeHint = ['queued', 'processing'].includes(job.status) ? '<div class="mb-4 p-4 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-800"><b>Идёт обработка.</b> Таблица ниже обновляется автоматически каждые 2 секунды.</div>' : '';
+  const qualityHint = '<div class="mb-4 p-4 rounded-2xl bg-slate-50 border border-slate-100 text-slate-700 text-sm"><b>Примечание:</b> статус файла “done + has review” значит файл обработан, но часть строк требует проверки. Низкие цены меньше 500₸ подсвечены как подозрительные, потому что часто это мусор из таблицы или тарифный коэффициент.</div>';
   const emptyHint = job.items_found === 0 && !['queued', 'processing'].includes(job.status) ? '<div class="mb-4 p-4 rounded-2xl bg-amber-50 border border-amber-100 text-amber-800"><b>Найдено 0 услуг.</b> Смотри таблицу файлов: там видно, где скан, ошибка чтения или AI не вернул позиции.</div>' : '';
 
-  $('uploadResult').innerHTML = `${activeHint}${emptyHint}
+  $('uploadResult').innerHTML = `${activeHint}${emptyHint}${qualityHint}
     <div class="grid md:grid-cols-4 gap-4 mb-4">
       <div class="bg-white/80 border border-slate-100 rounded-2xl p-4"><b>Статус job:</b><br>${statusBadge(job.status)}</div>
       <div class="bg-white/80 border border-slate-100 rounded-2xl p-4"><b>Прогресс:</b><br>${esc(progressText(job))}</div>
       <div class="bg-white/80 border border-slate-100 rounded-2xl p-4"><b>Job ID:</b><br><span class="text-xs break-all">${esc(job.job_id || '—')}</span></div>
       <div class="bg-white/80 border border-slate-100 rounded-2xl p-4"><b>Клиники:</b><br><span class="text-xs">${esc(partners || '—')}</span></div>
     </div>
-    <div class="mb-5 overflow-auto bg-white/80 rounded-2xl border border-slate-100"><div class="px-4 py-3 font-bold">Live-статус файлов внутри ZIP</div><table class="w-full text-sm"><thead><tr class="text-left text-slate-500"><th class="px-4 py-3">Клиника</th><th class="px-4 py-3">Файл</th><th class="px-4 py-3">Статус</th><th class="px-4 py-3">Услуг</th><th class="px-4 py-3">Ошибка</th></tr></thead><tbody>${docRows || '<tr><td class="p-4 text-slate-500" colspan="5">Нет файлов</td></tr>'}</tbody></table></div>
-    <div class="overflow-auto bg-white/80 rounded-2xl border border-slate-100"><div class="px-4 py-3 font-bold">Извлечённые позиции, первые 200</div><table class="w-full text-sm"><thead><tr class="text-left text-slate-500"><th class="px-4 py-3">Услуга</th><th class="px-4 py-3">Цена</th><th class="px-4 py-3">Категория</th><th class="px-4 py-3">Match</th><th class="px-4 py-3">Статус</th></tr></thead><tbody>${rows || '<tr><td class="p-4 text-slate-500" colspan="5">Позиции пока не извлечены</td></tr>'}</tbody></table></div>`;
+    <div class="mb-5 overflow-auto bg-white/80 rounded-2xl border border-slate-100"><div class="px-4 py-3 font-bold">Live-статус файлов внутри ZIP</div><table class="w-full text-sm"><thead><tr class="text-left text-slate-500"><th class="px-4 py-3">Клиника</th><th class="px-4 py-3">Файл</th><th class="px-4 py-3">Статус</th><th class="px-4 py-3">Услуг</th><th class="px-4 py-3">Ревью</th><th class="px-4 py-3">Ошибка</th></tr></thead><tbody>${docRows || '<tr><td class="p-4 text-slate-500" colspan="6">Нет файлов</td></tr>'}</tbody></table></div>
+    <div class="overflow-auto bg-white/80 rounded-2xl border border-slate-100"><div class="px-4 py-3 font-bold">Извлечённые позиции, первые 200 уникальных</div><table class="w-full text-sm"><thead><tr class="text-left text-slate-500"><th class="px-4 py-3">Клиника</th><th class="px-4 py-3">Услуга</th><th class="px-4 py-3">Цена</th><th class="px-4 py-3">Категория</th><th class="px-4 py-3">Match</th><th class="px-4 py-3">Статус</th></tr></thead><tbody>${rows || '<tr><td class="p-4 text-slate-500" colspan="6">Позиции пока не извлечены</td></tr>'}</tbody></table></div>`;
 }
 
 $('searchBtn').addEventListener('click', doSearch);
