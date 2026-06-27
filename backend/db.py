@@ -84,11 +84,32 @@ def new_uuid() -> str:
     return str(uuid.uuid4())
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    user_id = Column(String, primary_key=True, default=new_uuid)
+    email = Column(String, nullable=False, unique=True, index=True)
+    password_hash = Column(Text, nullable=False)
+    name = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    partners = relationship("Partner", back_populates="user")
+    services = relationship("Service", back_populates="user")
+    documents = relationship("PriceDocument", back_populates="user")
+    price_items = relationship("PriceItem", back_populates="user")
+
+
 class Partner(Base):
     __tablename__ = "partners"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_partners_user_name"),
+    )
 
     partner_id = Column(String, primary_key=True, default=new_uuid)
-    name = Column(String, nullable=False, index=True, unique=True)
+    user_id = Column(String, ForeignKey("users.user_id"), nullable=True, index=True)
+    name = Column(String, nullable=False, index=True)
     city = Column(String, nullable=True, index=True)
     address = Column(String, nullable=True)
     bin = Column(String(12), nullable=True, index=True)
@@ -98,6 +119,7 @@ class Partner(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    user = relationship("User", back_populates="partners")
     documents = relationship("PriceDocument", back_populates="partner")
     price_items = relationship("PriceItem", back_populates="partner")
 
@@ -105,10 +127,11 @@ class Partner(Base):
 class Service(Base):
     __tablename__ = "services"
     __table_args__ = (
-        UniqueConstraint("source_code", name="uq_services_source_code"),
+        UniqueConstraint("user_id", "source_code", name="uq_services_user_source_code"),
     )
 
     service_id = Column(String, primary_key=True, default=new_uuid)
+    user_id = Column(String, ForeignKey("users.user_id"), nullable=True, index=True)
     source_code = Column(String, nullable=True, index=True)
     service_name = Column(String, nullable=False, index=True)
     synonyms_json = Column(Text, default="[]")
@@ -119,6 +142,7 @@ class Service(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    user = relationship("User", back_populates="services")
     price_items = relationship("PriceItem", back_populates="service")
 
     @property
@@ -137,6 +161,7 @@ class PriceDocument(Base):
     __tablename__ = "price_documents"
 
     doc_id = Column(String, primary_key=True, default=new_uuid)
+    user_id = Column(String, ForeignKey("users.user_id"), nullable=True, index=True)
     partner_id = Column(String, ForeignKey("partners.partner_id"), nullable=False, index=True)
     file_name = Column(String, nullable=False)
     file_format = Column(String, nullable=False, index=True)
@@ -147,6 +172,7 @@ class PriceDocument(Base):
     raw_content = Column(Text, nullable=True)
     stored_path = Column(String, nullable=True)
 
+    user = relationship("User", back_populates="documents")
     partner = relationship("Partner", back_populates="documents")
     price_items = relationship("PriceItem", back_populates="document")
 
@@ -155,6 +181,7 @@ class PriceItem(Base):
     __tablename__ = "price_items"
 
     item_id = Column(String, primary_key=True, default=new_uuid)
+    user_id = Column(String, ForeignKey("users.user_id"), nullable=True, index=True)
     doc_id = Column(String, ForeignKey("price_documents.doc_id"), nullable=False, index=True)
     partner_id = Column(String, ForeignKey("partners.partner_id"), nullable=False, index=True)
     service_id = Column(String, ForeignKey("services.service_id"), nullable=True, index=True)
@@ -175,6 +202,7 @@ class PriceItem(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    user = relationship("User", back_populates="price_items")
     document = relationship("PriceDocument", back_populates="price_items")
     partner = relationship("Partner", back_populates="price_items")
     service = relationship("Service", back_populates="price_items")
@@ -210,12 +238,15 @@ def get_db():
         db.close()
 
 
-def get_or_create_partner(db, name: str, **kwargs) -> Partner:
+def get_or_create_partner(db, name: str, user_id: str | None = None, **kwargs) -> Partner:
     name = (name or "Анонимный тест").strip() or "Анонимный тест"
-    partner = db.query(Partner).filter(Partner.name == name).first()
+    query = db.query(Partner).filter(Partner.name == name)
+    if user_id is not None:
+        query = query.filter(Partner.user_id == user_id)
+    partner = query.first()
     if partner:
         return partner
-    partner = Partner(name=name, **kwargs)
+    partner = Partner(name=name, user_id=user_id, **kwargs)
     db.add(partner)
     db.flush()
     return partner
@@ -247,7 +278,7 @@ def _sqlite_columns(conn, table_name: str) -> set[str]:
     return {row[1] for row in rows}
 
 
-def _add_missing_columns(conn, table_name: str, columns: dict[str, str]) -> None:
+def _add_missing_sqlite_columns(conn, table_name: str, columns: dict[str, str]) -> None:
     if not _sqlite_table_exists(conn, table_name):
         return
     existing = _sqlite_columns(conn, table_name)
@@ -256,61 +287,107 @@ def _add_missing_columns(conn, table_name: str, columns: dict[str, str]) -> None
             conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN {name} {ddl}'))
 
 
-def run_sqlite_migrations() -> None:
-    """Tiny compatibility migrations for old Railway SQLite volumes.
+def _postgres_table_exists(conn, table_name: str) -> bool:
+    row = conn.execute(
+        text("SELECT to_regclass(:name)"),
+        {"name": f"public.{table_name}"},
+    ).fetchone()
+    return bool(row and row[0])
+
+
+def _postgres_columns(conn, table_name: str) -> set[str]:
+    rows = conn.execute(
+        text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name=:table_name"
+        ),
+        {"table_name": table_name},
+    ).fetchall()
+    return {row[0] for row in rows}
+
+
+def _add_missing_postgres_columns(conn, table_name: str, columns: dict[str, str]) -> None:
+    if not _postgres_table_exists(conn, table_name):
+        return
+    existing = _postgres_columns(conn, table_name)
+    for name, ddl in columns.items():
+        if name not in existing:
+            conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN {name} {ddl}'))
+
+
+def _drop_old_postgres_uniques(conn) -> None:
+    if not _postgres_table_exists(conn, "partners"):
+        return
+    conn.execute(text('ALTER TABLE "partners" DROP CONSTRAINT IF EXISTS partners_name_key'))
+    if _postgres_table_exists(conn, "services"):
+        conn.execute(text('ALTER TABLE "services" DROP CONSTRAINT IF EXISTS uq_services_source_code'))
+
+
+def run_compat_migrations() -> None:
+    """Small compatibility migrations for old SQLite/Postgres deployments.
 
     SQLAlchemy create_all() creates new tables, but it does not add columns to
-    existing tables. Railway Volume keeps the old prices.db, so we patch missing
-    columns here without deleting user data.
+    existing tables. We patch missing columns without deleting user data.
     """
-    if not SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
-        return
-    with engine.begin() as conn:
-        _add_missing_columns(conn, "partners", {
-            "city": "VARCHAR",
-            "address": "VARCHAR",
-            "bin": "VARCHAR(12)",
-            "contact_email": "VARCHAR",
-            "contact_phone": "VARCHAR",
-            "is_active": "BOOLEAN DEFAULT 1",
-            "created_at": "DATETIME",
-            "updated_at": "DATETIME",
-        })
-        _add_missing_columns(conn, "services", {
-            "source_code": "VARCHAR",
-            "synonyms_json": "TEXT DEFAULT '[]'",
-            "category": "VARCHAR",
-            "icd_code": "VARCHAR",
-            "tarificatr_code": "VARCHAR",
-            "is_active": "BOOLEAN DEFAULT 1",
-            "created_at": "DATETIME",
-            "updated_at": "DATETIME",
-        })
-        _add_missing_columns(conn, "price_documents", {
-            "file_format": "VARCHAR",
-            "effective_date": "DATE",
-            "parsed_at": "DATETIME",
-            "parse_status": "VARCHAR DEFAULT 'done'",
-            "parse_log": "TEXT",
-            "raw_content": "TEXT",
-            "stored_path": "VARCHAR",
-        })
-        _add_missing_columns(conn, "price_items", {
-            "service_code_source": "VARCHAR",
-            "normalized_name": "TEXT",
-            "match_confidence": "FLOAT DEFAULT 0",
-            "match_method": "VARCHAR",
-            "price_nonresident_kzt": "FLOAT",
-            "price_original": "FLOAT",
-            "currency_original": "VARCHAR DEFAULT 'KZT'",
-            "needs_review": "BOOLEAN DEFAULT 0",
-            "is_verified": "BOOLEAN DEFAULT 0",
-            "verification_note": "TEXT",
-            "effective_date": "DATE",
-            "is_active": "BOOLEAN DEFAULT 1",
-            "created_at": "DATETIME",
-            "updated_at": "DATETIME",
-        })
+    account_columns = {"user_id": "VARCHAR"}
+    if DATABASE_BACKEND == "sqlite":
+        with engine.begin() as conn:
+            _add_missing_sqlite_columns(conn, "partners", {
+                **account_columns,
+                "city": "VARCHAR",
+                "address": "VARCHAR",
+                "bin": "VARCHAR(12)",
+                "contact_email": "VARCHAR",
+                "contact_phone": "VARCHAR",
+                "is_active": "BOOLEAN DEFAULT 1",
+                "created_at": "DATETIME",
+                "updated_at": "DATETIME",
+            })
+            _add_missing_sqlite_columns(conn, "services", {
+                **account_columns,
+                "source_code": "VARCHAR",
+                "synonyms_json": "TEXT DEFAULT '[]'",
+                "category": "VARCHAR",
+                "icd_code": "VARCHAR",
+                "tarificatr_code": "VARCHAR",
+                "is_active": "BOOLEAN DEFAULT 1",
+                "created_at": "DATETIME",
+                "updated_at": "DATETIME",
+            })
+            _add_missing_sqlite_columns(conn, "price_documents", {
+                **account_columns,
+                "file_format": "VARCHAR",
+                "effective_date": "DATE",
+                "parsed_at": "DATETIME",
+                "parse_status": "VARCHAR DEFAULT 'done'",
+                "parse_log": "TEXT",
+                "raw_content": "TEXT",
+                "stored_path": "VARCHAR",
+            })
+            _add_missing_sqlite_columns(conn, "price_items", {
+                **account_columns,
+                "service_code_source": "VARCHAR",
+                "normalized_name": "TEXT",
+                "match_confidence": "FLOAT DEFAULT 0",
+                "match_method": "VARCHAR",
+                "price_nonresident_kzt": "FLOAT",
+                "price_original": "FLOAT",
+                "currency_original": "VARCHAR DEFAULT 'KZT'",
+                "needs_review": "BOOLEAN DEFAULT 0",
+                "is_verified": "BOOLEAN DEFAULT 0",
+                "verification_note": "TEXT",
+                "effective_date": "DATE",
+                "is_active": "BOOLEAN DEFAULT 1",
+                "created_at": "DATETIME",
+                "updated_at": "DATETIME",
+            })
+    elif DATABASE_BACKEND == "postgresql":
+        with engine.begin() as conn:
+            _drop_old_postgres_uniques(conn)
+            _add_missing_postgres_columns(conn, "partners", account_columns)
+            _add_missing_postgres_columns(conn, "services", account_columns)
+            _add_missing_postgres_columns(conn, "price_documents", account_columns)
+            _add_missing_postgres_columns(conn, "price_items", account_columns)
 
 
-run_sqlite_migrations()
+run_compat_migrations()
