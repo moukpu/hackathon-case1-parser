@@ -8,9 +8,18 @@ import pandas as pd
 import pdfplumber
 from docx import Document
 
+try:
+    from ocr import OCR_MIN_CHARS, ocr_pdf_text
+except Exception:  # pragma: no cover - OCR is optional fallback
+    OCR_MIN_CHARS = 40
+
+    def ocr_pdf_text(file_bytes: bytes, max_pages: int | None = None) -> str:
+        return ""
+
 
 SUPPORTED_EXTENSIONS = (".pdf", ".xlsx", ".xls", ".csv", ".docx", ".txt")
 GENERIC_ZIP_ROOTS = {"", "архив", "archive", "prices", "price", "прайсы", "прайс", "хакатон"}
+PDF_TEXT_FALLBACK_MIN_CHARS = 180
 
 
 def detect_file_format(filename: str, file_bytes: bytes | None = None) -> str:
@@ -127,7 +136,16 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
                 if rows:
                     chunks.append(f"\n--- PDF page {page_index} table {table_index} ---\n" + "\n".join(rows))
 
-    return "\n".join(chunks).strip()
+    extracted = "\n".join(chunks).strip()
+    if len(extracted) >= PDF_TEXT_FALLBACK_MIN_CHARS:
+        return extracted
+
+    ocr_text = ocr_pdf_text(file_bytes)
+    if ocr_text:
+        if extracted:
+            return f"{extracted}\n\n--- OCR fallback used ---\n{ocr_text}".strip()
+        return ocr_text
+    return extracted
 
 
 def extract_text_from_excel(file_bytes: bytes, filename: str = "") -> str:
