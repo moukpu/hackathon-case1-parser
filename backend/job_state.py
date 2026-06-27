@@ -12,7 +12,33 @@ ORIGINAL_SET_JOB = main.set_job
 ORIGINAL_SET_JOB_FILE = main.set_job_file
 
 
+def _dump_jobs_without_lock() -> None:
+    JOB_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    jobs = list(main.JOBS.values())[-50:]
+    JOB_STATE_PATH.write_text(json.dumps(jobs, ensure_ascii=False, default=str), encoding="utf-8")
+
+
+def save_jobs_state(use_lock: bool = True) -> None:
+    try:
+        if use_lock:
+            with main.JOBS_LOCK:
+                _dump_jobs_without_lock()
+        else:
+            _dump_jobs_without_lock()
+    except Exception:
+        pass
+
+
 class PersistentJobs(dict):
+    def __setitem__(self, key, value) -> None:
+        super().__setitem__(key, value)
+        save_jobs_state(use_lock=False)
+
+    def pop(self, key, default=None):
+        value = super().pop(key, default)
+        save_jobs_state(use_lock=False)
+        return value
+
     def clear(self) -> None:
         super().clear()
         try:
@@ -36,16 +62,6 @@ def _public_job(job: dict) -> dict:
     return copy
 
 
-def save_jobs_state() -> None:
-    try:
-        JOB_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with main.JOBS_LOCK:
-            jobs = list(main.JOBS.values())[-50:]
-        JOB_STATE_PATH.write_text(json.dumps(jobs, ensure_ascii=False, default=str), encoding="utf-8")
-    except Exception:
-        pass
-
-
 def load_jobs_state() -> None:
     if not JOB_STATE_PATH.exists():
         return
@@ -59,7 +75,7 @@ def load_jobs_state() -> None:
                     continue
                 if job.get("status") in main.ACTIVE_JOB_STATUSES:
                     job["status"] = "interrupted"
-                    job["error"] = "Сервер перезапустился во время обработки. Нужно загрузить файл заново."
+                    job["error"] = "Сервер перезапустился во время обработки. Загрузи архив заново."
                     job["finished_at"] = job.get("finished_at") or datetime.utcnow().isoformat()
                 main.JOBS[job["job_id"]] = job
     except Exception:
@@ -79,6 +95,7 @@ def patched_set_job_file(job_id: str, index: int, **kwargs) -> None:
 load_jobs_state()
 main.set_job = patched_set_job
 main.set_job_file = patched_set_job_file
+save_jobs_state()
 
 
 @main.app.get("/api/jobs")
