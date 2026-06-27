@@ -1,53 +1,78 @@
+const REVIEW_FILTERS = [
+  ['all', 'Все'],
+  ['low_price', 'Низкая цена'],
+  ['no_match', 'Нет совпадения'],
+  ['low_confidence', 'Низкая уверенность'],
+];
+
+const REVIEW_EMPTY_STATE = '<b>Кандидаты появятся после выбора строки</b><div class="hint">Система предложит топ-5 услуг из справочника.</div>';
+
 function reviewUiEsc(value) {
   return String(value ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
 }
 
+function reviewConfidence(item) {
+  const value = Number(item?.confidence ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
 function reviewReasonLabel(item) {
   if (item?.review_reason_label) return item.review_reason_label;
+
   const note = String(item?.note || '').toLowerCase();
   const method = String(item?.match_method || '').toLowerCase();
+
   if (note.includes('низкая цена') || note.includes('подозрительно')) return 'подозрительно низкая цена';
   if (!item?.service_id || ['unmatched', 'no_match', 'no_catalog', 'no_choices'].includes(method)) return 'нет совпадения';
-  if (method.includes('low') || Number(item?.confidence || 0) < 72) return 'низкая уверенность';
+  if (method.includes('low') || reviewConfidence(item) < 72) return 'низкая уверенность';
+
   return 'нужно проверить';
 }
 
 function reviewMatchesReason(item, reason) {
   if (!reason || reason === 'all') return true;
   if (item?.review_reason) return item.review_reason === reason;
+
   const label = reviewReasonLabel(item);
   if (reason === 'low_price') return label.includes('низкая цена');
   if (reason === 'no_match') return label.includes('нет совпадения');
   if (reason === 'low_confidence') return label.includes('низкая уверенность');
+
   return true;
 }
 
 function hideLegacyReviewManualControls() {
   document.querySelector('.review-match')?.remove();
   document.querySelector('.review-apply')?.remove();
-  const searchRow = document.getElementById('reviewServiceSearch')?.closest('.search-row');
-  const applyRow = document.getElementById('reviewServiceSelect')?.closest('.search-row');
-  searchRow?.remove();
-  applyRow?.remove();
+  document.getElementById('reviewServiceSearch')?.closest('.search-row')?.remove();
+  document.getElementById('reviewServiceSelect')?.closest('.search-row')?.remove();
+}
+
+function reviewCandidatesBox() {
+  return document.getElementById('reviewCandidates');
 }
 
 function clearReviewSelection(message = 'Позиция не выбрана.') {
   selectedReviewItemId = null;
+
   const selected = document.getElementById('reviewSelected');
   if (selected) selected.innerHTML = message;
-  const candidates = document.getElementById('reviewCandidates');
-  if (candidates) candidates.innerHTML = '<b>Кандидаты появятся после выбора строки</b><div class="hint">Система предложит топ-5 услуг из справочника.</div>';
+
+  const candidates = reviewCandidatesBox();
+  if (candidates) candidates.innerHTML = REVIEW_EMPTY_STATE;
 }
 
 async function applyReviewService(serviceId) {
   if (!selectedReviewItemId) return alert('Сначала выбери строку ревью');
   if (!serviceId) return alert('Выбери услугу');
+
   try {
     await api('/api/match', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ item_id: selectedReviewItemId, service_id: serviceId }),
     });
+
     clearReviewSelection('<span class="badge ok">готово</span><div class="hint" style="margin-top:8px">Совпадение применено. Строка ушла из ревью.</div>');
     if (typeof loadUnmatched === 'function') await loadUnmatched();
     if (typeof refreshStats === 'function') refreshStats();
@@ -58,54 +83,102 @@ async function applyReviewService(serviceId) {
 
 function ensureReviewCandidateBox() {
   const selected = document.getElementById('reviewSelected');
-  if (!selected || document.getElementById('reviewCandidates')) return;
-  selected.insertAdjacentHTML('afterend', '<div id="reviewCandidates" class="review-candidates card"><b>Кандидаты появятся после выбора строки</b><div class="hint">Система предложит топ-5 услуг из справочника.</div></div>');
+  if (!selected || reviewCandidatesBox()) return;
+
+  selected.insertAdjacentHTML('afterend', `<div id="reviewCandidates" class="review-candidates card">${REVIEW_EMPTY_STATE}</div>`);
 }
 
 function renderReviewFilterButtons() {
   const input = document.getElementById('reviewClinicFilter');
   if (!input || document.getElementById('reviewReasonFilters')) return;
-  input.insertAdjacentHTML('beforebegin', `
-    <div id="reviewReasonFilters" class="review-filter-row">
-      <button class="btn btn-soft active" type="button" data-review-reason="all">Все</button>
-      <button class="btn btn-soft" type="button" data-review-reason="low_price">Низкая цена</button>
-      <button class="btn btn-soft" type="button" data-review-reason="no_match">Нет совпадения</button>
-      <button class="btn btn-soft" type="button" data-review-reason="low_confidence">Низкая уверенность</button>
-    </div>
-  `);
-  document.querySelectorAll('[data-review-reason]').forEach(btn => btn.addEventListener('click', () => {
-    document.querySelectorAll('[data-review-reason]').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    clearReviewSelection();
-    if (typeof renderReviewList === 'function') renderReviewList();
-  }));
+
+  const buttons = REVIEW_FILTERS.map(([reason, label], index) => `
+    <button class="btn btn-soft ${index === 0 ? 'active' : ''}" type="button" data-review-reason="${reason}">${label}</button>
+  `).join('');
+
+  input.insertAdjacentHTML('beforebegin', `<div id="reviewReasonFilters" class="review-filter-row">${buttons}</div>`);
+
+  document.querySelectorAll('[data-review-reason]').forEach(button => {
+    button.addEventListener('click', () => {
+      document.querySelectorAll('[data-review-reason]').forEach(item => item.classList.remove('active'));
+      button.classList.add('active');
+      clearReviewSelection();
+      if (typeof renderReviewList === 'function') renderReviewList();
+    });
+  });
 }
 
 function activeReviewReason() {
   return document.querySelector('[data-review-reason].active')?.dataset.reviewReason || 'all';
 }
 
+function renderCandidate(candidate) {
+  return `
+    <div class="review-candidate">
+      <div>
+        <b>${reviewUiEsc(candidate.service_name)}</b>
+        <div class="hint">${reviewUiEsc(candidate.category || 'категория не указана')} · ${candidate.score || 0}%</div>
+      </div>
+      <button class="btn btn-primary" type="button" data-apply-candidate="${reviewUiEsc(candidate.service_id)}">Применить</button>
+    </div>
+  `;
+}
+
 async function loadReviewCandidates(itemId) {
-  const box = document.getElementById('reviewCandidates');
+  const box = reviewCandidatesBox();
   if (!box || !itemId || typeof api !== 'function') return;
+
   box.innerHTML = '<div class="hint">Ищу топ-5 кандидатов...</div>';
+
   try {
     const data = await api('/api/review/items/' + encodeURIComponent(itemId) + '/candidates');
     const candidates = data.candidates || [];
+
     if (!candidates.length) {
       box.innerHTML = '<b>Кандидаты не найдены</b><div class="hint">Нет уверенных вариантов в справочнике.</div>';
       return;
     }
-    box.innerHTML = `<div class="review-candidates-head"><b>Топ-5 кандидатов</b><span class="hint">Выбери лучшее совпадение</span></div><div class="review-candidate-list">${candidates.map(c => `
-      <div class="review-candidate">
-        <div><b>${reviewUiEsc(c.service_name)}</b><div class="hint">${reviewUiEsc(c.category || 'категория не указана')} · ${c.score || 0}%</div></div>
-        <button class="btn btn-primary" type="button" data-apply-candidate="${reviewUiEsc(c.service_id)}">Применить</button>
-      </div>
-    `).join('')}</div>`;
-    box.querySelectorAll('[data-apply-candidate]').forEach(btn => btn.addEventListener('click', () => applyReviewService(btn.dataset.applyCandidate)));
+
+    box.innerHTML = `
+      <div class="review-candidates-head"><b>Топ-5 кандидатов</b><span class="hint">Выбери лучшее совпадение</span></div>
+      <div class="review-candidate-list">${candidates.map(renderCandidate).join('')}</div>
+    `;
+
+    box.querySelectorAll('[data-apply-candidate]').forEach(button => {
+      button.addEventListener('click', () => applyReviewService(button.dataset.applyCandidate));
+    });
   } catch (e) {
     box.innerHTML = `<span class="badge bad">ошибка</span><div class="hint" style="margin-top:8px">${reviewUiEsc(e.message || e)}</div>`;
   }
+}
+
+function filteredReviewRows() {
+  const query = document.getElementById('reviewClinicFilter')?.value || '';
+  const reason = activeReviewReason();
+
+  return (lastReviewItems || []).filter(item => (
+    reviewMatchesReason(item, reason)
+    && ciMatch(query, item.clinic_name, item.original_name, item.standardized_name, item.note, item.review_reason_label)
+  ));
+}
+
+function renderReviewTable(rows) {
+  return `
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Клиника</th><th>Исходная строка</th><th>Цена</th><th>Совпадение</th><th>Причина</th></tr></thead>
+        <tbody>${rows.map(item => `
+          <tr class="review-row ${item.item_id === selectedReviewItemId ? 'selected' : ''}" data-item-id="${reviewUiEsc(item.item_id)}">
+            <td>${reviewUiEsc(item.clinic_name)}</td>
+            <td>${reviewUiEsc(item.original_name)}</td>
+            <td>${money(item.price_resident_kzt)}</td>
+            <td>${reviewConfidence(item)}%</td>
+            <td>${reviewUiEsc(reviewReasonLabel(item))}</td>
+          </tr>
+        `).join('')}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 function patchReviewUi() {
@@ -116,11 +189,13 @@ function patchReviewUi() {
 
   loadUnmatched = async function() {
     hideLegacyReviewManualControls();
+
     const box = document.getElementById('reviewResult');
     if (box) box.innerHTML = '<div class="hint">Загрузка ревью...</div>';
+
     try {
       lastReviewItems = await api('/api/review/items');
-      if (selectedReviewItemId && !(lastReviewItems || []).some(i => i.item_id === selectedReviewItemId)) {
+      if (selectedReviewItemId && !(lastReviewItems || []).some(item => item.item_id === selectedReviewItemId)) {
         clearReviewSelection();
       }
       renderReviewList();
@@ -133,24 +208,33 @@ function patchReviewUi() {
     hideLegacyReviewManualControls();
     renderReviewFilterButtons();
     ensureReviewCandidateBox();
-    const q = document.getElementById('reviewClinicFilter')?.value || '';
-    const reason = activeReviewReason();
-    const rows = (lastReviewItems || []).filter(i => reviewMatchesReason(i, reason) && ciMatch(q, i.clinic_name, i.original_name, i.standardized_name, i.note, i.review_reason_label));
-    if (selectedReviewItemId && !rows.some(i => i.item_id === selectedReviewItemId)) {
+
+    const rows = filteredReviewRows();
+    if (selectedReviewItemId && !rows.some(item => item.item_id === selectedReviewItemId)) {
       clearReviewSelection();
     }
+
     const target = document.getElementById('reviewResult');
     if (!target) return;
-    target.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Клиника</th><th>Исходная строка</th><th>Цена</th><th>Совпадение</th><th>Причина</th></tr></thead><tbody>${rows.map(i => `<tr class="review-row ${i.item_id===selectedReviewItemId?'selected':''}" data-item-id="${reviewUiEsc(i.item_id)}"><td>${reviewUiEsc(i.clinic_name)}</td><td>${reviewUiEsc(i.original_name)}</td><td>${money(i.price_resident_kzt)}</td><td>${i.confidence ?? 0}%</td><td>${reviewUiEsc(reviewReasonLabel(i))}</td></tr>`).join('')}</tbody></table></div>`;
-    target.querySelectorAll('.review-row').forEach(row => row.addEventListener('click', () => selectReviewItem(row.dataset.itemId)));
+
+    target.innerHTML = renderReviewTable(rows);
+    target.querySelectorAll('.review-row').forEach(row => {
+      row.addEventListener('click', () => selectReviewItem(row.dataset.itemId));
+    });
   };
 
   selectReviewItem = function(id) {
     hideLegacyReviewManualControls();
     selectedReviewItemId = id;
-    const item = (lastReviewItems || []).find(i => i.item_id === id);
+
+    const item = (lastReviewItems || []).find(row => row.item_id === id);
     const selected = document.getElementById('reviewSelected');
-    if (selected) selected.innerHTML = item ? `Выбрано: <b>${reviewUiEsc(item.original_name)}</b> · ${money(item.price_resident_kzt)} · ${reviewUiEsc(item.clinic_name)} · ${reviewUiEsc(reviewReasonLabel(item))}` : 'Позиция не выбрана.';
+    if (selected) {
+      selected.innerHTML = item
+        ? `Выбрано: <b>${reviewUiEsc(item.original_name)}</b> · ${money(item.price_resident_kzt)} · ${reviewUiEsc(item.clinic_name)} · ${reviewUiEsc(reviewReasonLabel(item))}`
+        : 'Позиция не выбрана.';
+    }
+
     renderReviewList();
     loadReviewCandidates(id);
   };
@@ -160,6 +244,7 @@ function patchReviewUi() {
 
 function ensureReviewImprovementsStyles() {
   if (document.getElementById('reviewImprovementsStyles')) return;
+
   const style = document.createElement('style');
   style.id = 'reviewImprovementsStyles';
   style.textContent = `
