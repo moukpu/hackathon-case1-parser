@@ -7,7 +7,7 @@ from typing import Iterable
 from fastapi import Depends, HTTPException
 from fastapi.responses import Response
 from openpyxl import Workbook
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from auth import AuthUser, require_user
@@ -18,7 +18,7 @@ from backend.main import (
     item_to_response,
     price_item_matches_query,
 )
-from db import Partner, PriceItem, get_db
+from db import Partner, PriceDocument, PriceItem, get_db
 
 
 PRICE_EXPORT_COLUMNS = ["Клиника", "Услуга", "Цена KZT", "Категория", "Match %", "Ревью", "Дата"]
@@ -84,15 +84,15 @@ def job_doc_to_export_row(doc: dict) -> dict:
     }
 
 
-def missing_job_export_rows(job_id: str) -> list[dict]:
-    return [{
-        "Клиника": "",
-        "Файл": f"job_{job_id}",
-        "Статус": "interrupted",
-        "Услуг": 0,
-        "Ревью": 0,
-        "Ошибка": "Job не найден после рестарта сервера. Конкретный job-export недоступен. Используй экспорт поиска/ревью/партнёра или загрузи архив заново.",
-    }]
+def document_to_export_row(doc: PriceDocument) -> dict:
+    return {
+        "Клиника": doc.partner.name if doc.partner else "",
+        "Файл": doc.file_name,
+        "Статус": doc.parse_status,
+        "Услуг": len(doc.price_items or []),
+        "Ревью": sum(1 for item in (doc.price_items or []) if item.needs_review),
+        "Ошибка": doc.parse_log,
+    }
 
 
 def rows_to_csv_response(rows: list[dict], columns: list[str], filename: str) -> Response:
@@ -151,6 +151,28 @@ def active_price_items(db: Session, user_id: str) -> Iterable[PriceItem]:
     )
 
 
+def db_items_for_job(db: Session, user_id: str, job_id: str) -> list[PriceItem]:
+    return (
+        db.query(PriceItem)
+        .filter(PriceItem.user_id == user_id, text("price_items.job_id = :job_id"))
+        .params(job_id=job_id)
+        .order_by(PriceItem.created_at.asc())
+        .limit(50000)
+        .all()
+    )
+
+
+def db_docs_for_job(db: Session, user_id: str, job_id: str) -> list[PriceDocument]:
+    return (
+        db.query(PriceDocument)
+        .filter(PriceDocument.user_id == user_id, text("price_documents.job_id = :job_id"))
+        .params(job_id=job_id)
+        .order_by(PriceDocument.parsed_at.asc())
+        .limit(5000)
+        .all()
+    )
+
+
 @app.get("/api/export/search.{file_format}")
 async def export_search(file_format: str, q: str, db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
     q = (q or "").strip()
@@ -191,21 +213,24 @@ async def export_review(file_format: str, db: Session = Depends(get_db), current
 
 
 @app.get("/api/export/jobs/{job_id}.{file_format}")
-async def export_job(job_id: str, file_format: str, current_user: AuthUser = Depends(require_user)):
+async def export_job(job_id: str, file_format: str, db: Session = Depends(get_db), current_user: AuthUser = Depends(require_user)):
     with JOBS_LOCK:
         job = dict(JOBS.get(job_id) or {})
 
     file_format = (file_format or "csv").lower()
     filename = f"job_{job_id}"
 
-    if not job or job.get("user_id") != current_user.user_id:
-        doc_rows = missing_job_export_rows(job_id)
-        if file_format == "xlsx":
-            return rows_to_xlsx_response({"files": (doc_rows, JOB_DOC_COLUMNS)}, safe_export_name(filename))
-        return rows_to_csv_response(doc_rows, JOB_DOC_COLUMNS, safe_export_name(filename))
+    if job and job.get("user_id") == current_user.user_id:
+        item_rows = [job_item_to_export_row(item) for item in job.get("data") or []]
+        doc_rows = [job_doc_to_export_row(doc) for doc in job.get("documents") or []]
+    else:
+        db_items = db_items_for_job(db, current_user.user_id, job_id)
+        db_docs = db_docs_for_job(db, current_user.user_id, job_id)
+        if not db_items and not db_docs:
+            raise HTTPException(status_code=404, detail="Job export не найден. Старые обработки до фикса job_id нельзя восстановить; загрузи архив заново.")
+        item_rows = [price_item_to_export_row(item) for item in db_items]
+        doc_rows = [document_to_export_row(doc) for doc in db_docs]
 
-    item_rows = [job_item_to_export_row(item) for item in job.get("data") or []]
-    doc_rows = [job_doc_to_export_row(doc) for doc in job.get("documents") or []]
     if file_format == "xlsx":
         return rows_to_xlsx_response(
             {
