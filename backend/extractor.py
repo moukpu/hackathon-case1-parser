@@ -1,4 +1,5 @@
 import io
+import re
 import zipfile
 from pathlib import PurePosixPath
 from typing import Iterable, Tuple
@@ -9,6 +10,7 @@ from docx import Document
 
 
 SUPPORTED_EXTENSIONS = (".pdf", ".xlsx", ".xls", ".csv", ".docx", ".txt")
+GENERIC_ZIP_ROOTS = {"", "архив", "archive", "prices", "price", "прайсы", "прайс", "хакатон"}
 
 
 def detect_file_format(filename: str, file_bytes: bytes | None = None) -> str:
@@ -26,14 +28,48 @@ def detect_file_format(filename: str, file_bytes: bytes | None = None) -> str:
     return "text"
 
 
+def _clean_archive_root(value: str) -> str:
+    text = re.sub(r"[_-]+", " ", value or "")
+    text = re.sub(r"(?i)\b(202\d|20\d\d|год|zip|archive|архив)\b", " ", text)
+    return re.sub(r"\s+", " ", text).strip(" ._-–—").lower()
+
+
+def _strip_generic_zip_root(zip_filename: str, inner_paths: list[str]) -> dict[str, str]:
+    """Remove one common technical root folder from ZIP paths.
+
+    Example: `Хакатон/Клиника 1 2026.pdf` becomes `Клиника 1 2026.pdf`,
+    so partner inference uses the real clinic file name, not the archive folder.
+    Real clinic folders are kept: `Clinic A/price.xlsx`, `Clinic B/price.xlsx`.
+    """
+    if not inner_paths:
+        return {}
+
+    split_paths = [p.split("/") for p in inner_paths]
+    if not all(len(parts) > 1 for parts in split_paths):
+        return {p: p for p in inner_paths}
+
+    first_root = split_paths[0][0]
+    if not all(parts[0] == first_root for parts in split_paths):
+        return {p: p for p in inner_paths}
+
+    clean_root = _clean_archive_root(first_root)
+    clean_zip = _clean_archive_root(PurePosixPath(zip_filename or "").stem)
+    should_strip = clean_root in GENERIC_ZIP_ROOTS or clean_root == clean_zip
+    if not should_strip:
+        return {p: p for p in inner_paths}
+
+    return {p: str(PurePosixPath(*p.split("/")[1:])) for p in inner_paths}
+
+
 def iter_input_files(filename: str, file_bytes: bytes) -> Iterable[Tuple[str, bytes]]:
     """Yield original file or files inside ZIP.
 
-    For ZIP files we keep the inner relative path, not just basename. This allows
-    the API to infer partner/clinic names from folders like `Clinic A/price.xlsx`.
+    For ZIP files we keep meaningful inner relative paths. One generic archive
+    root folder is stripped, but real clinic folders are preserved.
     """
     if filename.lower().endswith(".zip"):
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
+            entries: list[tuple[str, str]] = []
             for info in archive.infolist():
                 if info.is_dir():
                     continue
@@ -43,7 +79,11 @@ def iter_input_files(filename: str, file_bytes: bytes) -> Iterable[Tuple[str, by
                     continue
                 if not basename.lower().endswith(SUPPORTED_EXTENSIONS):
                     continue
-                yield inner_path, archive.read(info.filename)
+                entries.append((inner_path, info.filename))
+
+            display_paths = _strip_generic_zip_root(filename, [inner for inner, _ in entries])
+            for inner_path, archive_name in entries:
+                yield display_paths.get(inner_path, inner_path), archive.read(archive_name)
     else:
         yield filename, file_bytes
 
