@@ -53,9 +53,11 @@ if os.path.isdir(frontend_dir):
     app.mount("/frontend", StaticFiles(directory=frontend_dir), name="frontend")
 
 ROOT_DIR = Path(os.path.dirname(__file__)).parent
-UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", str(ROOT_DIR / "uploads")))
+VOLUME_DIR = Path(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/data"))
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", str((VOLUME_DIR / "uploads") if VOLUME_DIR.exists() else (ROOT_DIR / "uploads"))))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 BUNDLED_CATALOG_PATH = ROOT_DIR / "data" / "services_catalog.csv"
+CATALOG_EXTENSIONS = (".csv", ".xlsx", ".xls", ".json")
 
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
@@ -81,6 +83,45 @@ def safe_filename(value: str) -> str:
     return value[:120]
 
 
+def catalog_storage_dir() -> Path:
+    if VOLUME_DIR.exists() and VOLUME_DIR.is_dir():
+        VOLUME_DIR.mkdir(parents=True, exist_ok=True)
+        return VOLUME_DIR
+    fallback = ROOT_DIR / "data"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+def user_catalog_candidates() -> list[Path]:
+    base = catalog_storage_dir()
+    return [base / f"services_catalog_user{ext}" for ext in CATALOG_EXTENSIONS]
+
+
+def preferred_catalog_path() -> Path:
+    env_path = os.getenv("CATALOG_PATH")
+    if env_path and Path(env_path).exists():
+        return Path(env_path)
+    for candidate in user_catalog_candidates():
+        if candidate.exists():
+            return candidate
+    return BUNDLED_CATALOG_PATH
+
+
+def persist_user_catalog(file_name: str, contents: bytes) -> Path:
+    suffix = Path(file_name or "").suffix.lower()
+    if suffix not in CATALOG_EXTENSIONS:
+        suffix = ".csv"
+    storage = catalog_storage_dir()
+    for old in storage.glob("services_catalog_user.*"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    target = storage / f"services_catalog_user{suffix}"
+    target.write_bytes(contents)
+    return target
+
+
 def infer_partner_name(upload_filename: str, inner_filename: str, fallback: str) -> str:
     fallback = (fallback or "Анонимный тест").strip() or "Анонимный тест"
     if not (upload_filename or "").lower().endswith(".zip"):
@@ -94,7 +135,7 @@ def infer_partner_name(upload_filename: str, inner_filename: str, fallback: str)
     candidate = parts[0] if len(parts) > 1 else PurePosixPath(parts[0]).stem
     candidate = re.sub(r"[_-]+", " ", candidate)
     candidate = re.sub(
-        r"(?i)\b(price|prices|pricelist|прайс|прайсы|прейскурант|услуги|services|лист|file|файл|202\d|20\d\d)\b",
+        r"(?i)\b(price|prices|pricelist|прайс|прайсы|прейскурант|услуги|services|лист|file|файл|год|года|year|202\d|20\d\d)\b",
         " ",
         candidate,
     )
@@ -148,13 +189,14 @@ def bootstrap_catalog_if_needed(force: bool = False) -> dict:
         current_count = db.query(Service).count()
         if current_count and not force:
             return {"message": "Справочник уже загружен", "services": current_count, "skipped_bootstrap": True}
-        if not BUNDLED_CATALOG_PATH.exists():
-            return {"message": "Встроенный справочник не найден", "services": current_count, "skipped_bootstrap": True}
-        result = import_service_catalog(db, BUNDLED_CATALOG_PATH.name, BUNDLED_CATALOG_PATH.read_bytes())
-        return {"message": "Встроенный справочник загружен", **result, "services": db.query(Service).count()}
+        catalog_path = preferred_catalog_path()
+        if not catalog_path.exists():
+            return {"message": "Справочник не найден", "services": current_count, "skipped_bootstrap": True}
+        result = import_service_catalog(db, catalog_path.name, catalog_path.read_bytes())
+        return {"message": "Справочник загружен", **result, "services": db.query(Service).count(), "catalog_source": str(catalog_path)}
     except Exception as exc:
         db.rollback()
-        return {"message": "Ошибка загрузки встроенного справочника", "error": str(exc)}
+        return {"message": "Ошибка загрузки справочника", "error": str(exc)}
     finally:
         db.close()
 
@@ -344,7 +386,7 @@ async def read_index():
 
 @app.get("/api/health")
 async def health(db: Session = Depends(get_db)):
-    return {"ok": True, "services": db.query(Service).count(), "documents": db.query(PriceDocument).count()}
+    return {"ok": True, "services": db.query(Service).count(), "documents": db.query(PriceDocument).count(), "catalog_source": str(preferred_catalog_path())}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -439,10 +481,39 @@ async def upload_catalog(file: UploadFile = File(...), db: Session = Depends(get
     contents = await file.read()
     try:
         result = import_service_catalog(db, file.filename, contents)
-        return {"message": "Справочник услуг загружен", **result, "services": db.query(Service).count()}
+        saved_path = persist_user_catalog(file.filename, contents)
+        return {"message": "Справочник услуг загружен", **result, "services": db.query(Service).count(), "catalog_source": str(saved_path)}
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Ошибка импорта справочника: {exc}")
+
+
+@app.post("/api/admin/clear-prices")
+async def clear_prices(db: Session = Depends(get_db)):
+    """Clear parsed price data while preserving the service catalog."""
+    try:
+        items = db.query(PriceItem).delete(synchronize_session=False)
+        docs = db.query(PriceDocument).delete(synchronize_session=False)
+        partners = db.query(Partner).delete(synchronize_session=False)
+        db.commit()
+        with JOBS_LOCK:
+            JOBS.clear()
+        for stored_file in UPLOAD_DIR.glob("*"):
+            if stored_file.is_file():
+                try:
+                    stored_file.unlink()
+                except OSError:
+                    pass
+        return {
+            "message": "Прайсы очищены. Справочник сохранён.",
+            "deleted_price_items": items,
+            "deleted_documents": docs,
+            "deleted_partners": partners,
+            "services": db.query(Service).count(),
+        }
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Ошибка очистки базы: {exc}")
 
 
 @app.post("/api/partners")
@@ -464,7 +535,6 @@ async def upload_file(
     effective_date: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
-    # Backward-compatible endpoint: process synchronously by creating a temporary job and waiting.
     groq_api_key = os.getenv("GROQ_API_KEY")
     if not groq_api_key:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY не настроен.")
@@ -590,4 +660,5 @@ async def stats(db: Session = Depends(get_db)):
         "matched_items": matched_items,
         "auto_normalization_percent": round((matched_items / total_items * 100), 2) if total_items else 0,
         "needs_review": review_items,
+        "catalog_source": str(preferred_catalog_path()),
     }
