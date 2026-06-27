@@ -8,12 +8,33 @@
 
 const clearBtn = document.getElementById('clearDbBtn');
 const clearResult = document.getElementById('clearDbResult');
+let clearResultHideTimer = null;
 
 function currentUploadLooksActive() {
   const uploadResult = document.getElementById('uploadResult');
   if (!uploadResult || uploadResult.style.display === 'none') return false;
   const text = uploadResult.textContent.toLowerCase();
   return text.includes('обработка') || text.includes('ожидает') || text.includes('создаю очередь');
+}
+
+function capturePageScroll() {
+  return { x: window.scrollX || 0, y: window.scrollY || 0 };
+}
+
+function restorePageScroll(position) {
+  if (!position) return;
+  requestAnimationFrame(() => window.scrollTo(position.x, position.y));
+}
+
+function showClearResult(html, { autoHide = false } = {}) {
+  if (!clearResult) return;
+  clearTimeout(clearResultHideTimer);
+  clearResult.innerHTML = html;
+  if (autoHide) {
+    clearResultHideTimer = setTimeout(() => {
+      clearResult.innerHTML = '';
+    }, 6500);
+  }
 }
 
 async function readResponseSafely(res) {
@@ -51,9 +72,7 @@ function uiStatusLabel(status, label) {
 
 clearBtn?.addEventListener('click', async () => {
   if (currentUploadLooksActive()) {
-    if (clearResult) {
-      clearResult.innerHTML = '<div class="card"><span class="badge warn">подожди</span><div class="hint" style="margin-top:10px">Нельзя чистить базу, пока идёт обработка файлов. Дождись статуса “готово”.</div></div>';
-    }
+    showClearResult('<div class="card"><span class="badge warn">подожди</span><div class="hint" style="margin-top:10px">Нельзя чистить базу, пока идёт обработка файлов. Дождись статуса “готово”.</div></div>');
     return;
   }
 
@@ -61,9 +80,7 @@ clearBtn?.addEventListener('click', async () => {
   if (!ok) return;
 
   clearBtn.disabled = true;
-  if (clearResult) {
-    clearResult.innerHTML = '<div class="hint">Очищаю прайсы...</div>';
-  }
+  showClearResult('<div class="hint">Очищаю прайсы...</div>');
 
   try {
     const res = await fetch('/api/admin/clear-prices', { method: 'POST' });
@@ -73,9 +90,10 @@ clearBtn?.addEventListener('click', async () => {
       throw new Error(detail || `HTTP ${res.status}`);
     }
 
-    if (clearResult) {
-      clearResult.innerHTML = `<div class="card"><span class="badge ok">готово</span><div style="margin-top:10px"><b>Прайсы очищены</b></div><div class="hint">Удалено позиций: ${data.deleted_price_items || 0}, документов: ${data.deleted_documents || 0}, партнёров: ${data.deleted_partners || 0}. Справочник сохранён: ${data.services || 0} услуг.</div></div>`;
-    }
+    showClearResult(
+      `<div class="card"><span class="badge ok">готово</span><div style="margin-top:10px"><b>Прайсы очищены</b></div><div class="hint">Удалено позиций: ${data.deleted_price_items || 0}, документов: ${data.deleted_documents || 0}, партнёров: ${data.deleted_partners || 0}. Справочник сохранён: ${data.services || 0} услуг.</div></div>`,
+      { autoHide: true },
+    );
 
     localStorage.removeItem('lastJobId');
     if (typeof refreshStats === 'function') refreshStats();
@@ -86,9 +104,7 @@ clearBtn?.addEventListener('click', async () => {
       uploadResult.innerHTML = '';
     }
   } catch (e) {
-    if (clearResult) {
-      clearResult.innerHTML = `<div class="card"><span class="badge bad">ошибка</span><div class="hint" style="margin-top:10px">${uiEsc(e.message || e)}</div></div>`;
-    }
+    showClearResult(`<div class="card"><span class="badge bad">ошибка</span><div class="hint" style="margin-top:10px">${uiEsc(e.message || e)}</div></div>`);
   } finally {
     clearBtn.disabled = false;
   }
@@ -223,9 +239,11 @@ function wrapRenderJobForExport() {
   if (typeof renderJob !== 'function' || window.__renderJobExportWrapped) return;
   const originalRenderJob = renderJob;
   renderJob = function(job, keepScroll = true) {
+    const pageScroll = keepScroll ? capturePageScroll() : null;
     const result = originalRenderJob.call(this, job, keepScroll);
     if (job?.job_id) localStorage.setItem('lastJobId', job.job_id);
     injectJobExportButtons(job?.job_id, job);
+    restorePageScroll(pageScroll);
     if (job && !['queued', 'processing'].includes(job.status || '') && typeof loadUploadHistory === 'function') {
       loadUploadHistory();
     }
@@ -283,6 +301,7 @@ function ensureUploadHistoryPanel() {
 async function loadUploadHistory() {
   const box = document.getElementById('uploadHistoryList');
   if (!box) return;
+  const pageScroll = capturePageScroll();
   box.innerHTML = '<div class="hint">Загрузка истории...</div>';
   try {
     const rows = await api('/api/upload-history');
@@ -301,6 +320,8 @@ async function loadUploadHistory() {
     }));
   } catch (e) {
     box.innerHTML = `<div class="card"><span class="badge bad">ошибка</span><div class="hint" style="margin-top:10px">${uiEsc(e.message || e)}</div></div>`;
+  } finally {
+    restorePageScroll(pageScroll);
   }
 }
 
