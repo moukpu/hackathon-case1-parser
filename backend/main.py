@@ -2,7 +2,7 @@ import os
 import re
 import sys
 from datetime import date, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
@@ -35,7 +35,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="MedArchive Price Parser API",
     description="MVP: parsing partner clinic price archives, service catalog matching, verification queue and search.",
-    version="0.3.0",
+    version="0.4.0",
 )
 
 app.add_middleware(
@@ -74,6 +74,34 @@ class PartnerUpdateRequest(BaseModel):
 def safe_filename(value: str) -> str:
     value = re.sub(r"[^a-zA-Zа-яА-Я0-9._-]+", "_", value or "file")
     return value[:120]
+
+
+def infer_partner_name(upload_filename: str, inner_filename: str, fallback: str) -> str:
+    """Infer clinic/partner name for multi-clinic ZIP archives.
+
+    Priority:
+    1. First folder inside ZIP: `Clinic A/price.xlsx` -> `Clinic A`.
+    2. Flat ZIP filename stem: `Clinic A price.xlsx` -> `Clinic A`.
+    3. Form clinic_name fallback.
+    """
+    fallback = (fallback or "Анонимный тест").strip() or "Анонимный тест"
+    if not (upload_filename or "").lower().endswith(".zip"):
+        return fallback
+
+    normalized_path = (inner_filename or "").replace("\\", "/")
+    parts = [p.strip() for p in normalized_path.split("/") if p.strip() and p.strip() != "."]
+    if not parts:
+        return fallback
+
+    candidate = parts[0] if len(parts) > 1 else PurePosixPath(parts[0]).stem
+    candidate = re.sub(r"[_-]+", " ", candidate)
+    candidate = re.sub(
+        r"(?i)\b(price|prices|pricelist|прайс|прайсы|прейскурант|услуги|services|лист|file|файл|202\d|20\d\d)\b",
+        " ",
+        candidate,
+    )
+    candidate = re.sub(r"\s+", " ", candidate).strip(" ._-–—")
+    return candidate or fallback
 
 
 def to_float(value):
@@ -135,7 +163,6 @@ def bootstrap_catalog_if_needed(force: bool = False) -> dict:
 
 @app.on_event("startup")
 def startup_bootstrap_catalog():
-    # Keeps demo usable after Railway redeploy even if the operator has not uploaded XLSX yet.
     bootstrap_catalog_if_needed(force=False)
 
 
@@ -198,7 +225,6 @@ async def upload_file(
     if db.query(Service).count() == 0:
         bootstrap_catalog_if_needed(force=False)
 
-    partner = get_or_create_partner(db, clinic_name)
     parsed_effective_date = date.today()
     if effective_date:
         try:
@@ -208,10 +234,15 @@ async def upload_file(
 
     all_response_items = []
     document_results = []
+    partners_seen: set[str] = set()
 
     for upload in files:
         original_bytes = await upload.read()
         for inner_filename, contents in iter_input_files(upload.filename, original_bytes):
+            partner_name = infer_partner_name(upload.filename, inner_filename, clinic_name)
+            partner = get_or_create_partner(db, partner_name)
+            partners_seen.add(partner.name)
+
             doc = PriceDocument(
                 partner_id=partner.partner_id,
                 file_name=inner_filename,
@@ -232,14 +263,14 @@ async def upload_file(
                 if not raw_text.strip():
                     doc.parse_status = "error"
                     doc.parse_log = "Документ не содержит распознаваемого текста. Вероятно, нужен OCR."
-                    document_results.append({"file_name": inner_filename, "status": doc.parse_status, "items": 0})
+                    document_results.append({"clinic_name": partner.name, "file_name": inner_filename, "status": doc.parse_status, "items": 0})
                     continue
 
                 parsed_data = parse_price_list_with_ai(raw_text, groq_api_key)
                 if not parsed_data:
                     doc.parse_status = "error"
                     doc.parse_log = "AI не вернул структурированные позиции."
-                    document_results.append({"file_name": inner_filename, "status": doc.parse_status, "items": 0})
+                    document_results.append({"clinic_name": partner.name, "file_name": inner_filename, "status": doc.parse_status, "items": 0})
                     continue
 
                 created_count = 0
@@ -311,18 +342,19 @@ async def upload_file(
 
                 doc.parse_status = "needs_review" if review_count else "done"
                 doc.parse_log = f"Создано позиций: {created_count}; на ревью: {review_count}"
-                document_results.append({"file_name": inner_filename, "status": doc.parse_status, "items": created_count})
+                document_results.append({"clinic_name": partner.name, "file_name": inner_filename, "status": doc.parse_status, "items": created_count})
 
             except Exception as exc:
                 doc.parse_status = "error"
                 doc.parse_log = str(exc)
-                document_results.append({"file_name": inner_filename, "status": doc.parse_status, "items": 0, "error": str(exc)})
+                document_results.append({"clinic_name": partner.name, "file_name": inner_filename, "status": doc.parse_status, "items": 0, "error": str(exc)})
 
     db.commit()
 
     return {
         "message": "Успешно обработано!" if all_response_items else "Файлы обработаны, но позиции не извлечены.",
-        "clinic_name": partner.name,
+        "clinic_name": clinic_name,
+        "partners_detected": sorted(partners_seen),
         "documents": document_results,
         "items_found": len(all_response_items),
         "needs_review": sum(1 for item in all_response_items if item["needs_review"]),
