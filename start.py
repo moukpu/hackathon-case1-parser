@@ -5,6 +5,7 @@ import uvicorn
 # Registers optional API routes without touching backend/main.py.
 import backend.export_routes  # noqa: F401,E402
 import backend.job_state  # noqa: F401,E402
+import backend.db_info  # noqa: F401,E402
 
 
 raw_port = os.getenv("PORT", "8080")
