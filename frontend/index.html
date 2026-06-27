@@ -1,99 +1,134 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html class="h-full" lang="ru">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Парсер прайсов</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <title>Price Parser</title>
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
     :root{
-      /* One coherent palette: warm ivory + charcoal + one calm violet accent. */
-      --bg:#f7f0e6;
-      --surface:#fffaf2;
-      --surface-2:#fffdf8;
-      --surface-3:#f1e7d8;
-      --ink:#17120d;
-      --muted:#776b5e;
-      --line:#e5d7c5;
-      --line-strong:#d2bea6;
-      --dark:#18130e;
-      --dark-2:#241d16;
-      --accent:#6f63d9;
-      --accent-hover:#5f54c4;
-      --accent-soft:#eeeafd;
-      --green:#1f7a4d;
-      --green-bg:#edf8f1;
-      --amber:#8f6516;
-      --amber-bg:#fff6df;
-      --red:#a83a3a;
-      --red-bg:#fff0ef;
+      --background:#fbf9f6;
+      --surface:#fbf9f6;
+      --surface-bright:#fbf9f6;
+      --surface-lowest:#ffffff;
+      --surface-low:#f5f3f0;
+      --surface-container:#efeeeb;
+      --surface-high:#eae8e5;
+      --surface-highest:#e4e2df;
+      --surface-variant:#e4e2df;
+      --outline:#75796b;
+      --outline-variant:#c5c8b8;
+      --on-background:#1b1c1a;
+      --on-surface:#1b1c1a;
+      --on-variant:#45483c;
+      --secondary:#5f5e5e;
+      --secondary-container:#e2dfde;
+      --on-secondary-container:#363635;
+      --primary:#3e5219;
+      --primary-container:#556b2f;
+      --on-primary:#ffffff;
+      --primary-soft:#e8eddf;
+      --warning:#7a5600;
+      --warning-soft:#f4ede1;
+      --error:#93000a;
+      --error-soft:#f4eae9;
     }
     *{box-sizing:border-box}
-    html,body{margin:0;min-height:100%;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink);background:var(--bg);font-size:14px}
-    body:before{content:"";position:fixed;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(255,255,255,.46),rgba(255,255,255,0) 320px)}
-    .app{position:relative;z-index:1;max-width:1280px;margin:0 auto;padding:24px 22px 48px}
-    .side{height:72px;background:var(--dark);border-radius:26px;padding:10px 12px 10px 22px;display:flex;align-items:center;gap:22px;box-shadow:0 20px 50px rgba(24,19,14,.14)}
-    .brand{min-width:200px;color:#fff}.brand-main{font-size:18px;font-weight:950;letter-spacing:-.045em}.brand-sub{margin-top:2px;color:rgba(255,255,255,.52);font-size:12px;font-weight:650}
-    .nav{flex:1;display:flex;align-items:center;justify-content:center;gap:6px}.tab{border:0;background:transparent;color:rgba(255,255,255,.64);border-radius:999px;padding:11px 14px;font-weight:850;letter-spacing:-.015em;cursor:pointer}.tab:hover{background:rgba(255,255,255,.08);color:#fff}.tab-active{background:var(--surface);color:var(--dark);box-shadow:0 10px 26px rgba(0,0,0,.18)}
-    .side-foot{margin-left:auto;color:rgba(255,255,255,.5);font-size:12px;max-width:220px;line-height:1.35}.main{padding-top:44px}
-    .topline{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:26px}.page-title{font-size:64px;line-height:.92;font-weight:950;letter-spacing:-.085em;max-width:760px}.page-note{margin-top:18px;color:var(--muted);font-size:17px;max-width:560px}
-    .top-status{display:inline-flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:10px 13px;color:var(--muted);font-size:12px;font-weight:850}.status-dot{width:8px;height:8px;border-radius:99px;background:#2f9d62}
-    .panel{background:var(--surface);border:1px solid var(--line);border-radius:34px;padding:26px;box-shadow:0 22px 60px rgba(47,34,19,.07)}.panel + .panel{margin-top:18px}.panel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:18px}.h1{font-size:25px;font-weight:930;letter-spacing:-.055em}.hint{color:var(--muted);font-size:14px;margin-top:6px}
-    .chips{display:flex;gap:8px;flex-wrap:wrap}.chip{background:var(--surface-3);border:1px solid var(--line);border-radius:999px;padding:8px 11px;color:#675b4f;font-size:12px;font-weight:850}
-    .hidden-file{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}.drop{display:block;background:var(--surface-2);border:1.5px dashed var(--line-strong);border-radius:28px;padding:52px 30px;text-align:center;cursor:pointer;transition:.16s}.drop:hover{background:#fff;border-color:var(--dark);transform:translateY(-1px)}.drop-title{font-size:32px;line-height:1;font-weight:950;letter-spacing:-.07em}.drop-icon{display:none}
-    .btn{border:0;border-radius:999px;background:var(--dark);color:#fff;padding:12px 18px;font-weight:900;cursor:pointer;box-shadow:0 12px 26px rgba(24,19,14,.14)}.btn:hover{transform:translateY(-1px)}.btn-primary{background:var(--accent);box-shadow:0 14px 30px rgba(111,99,217,.18)}.btn-primary:hover{background:var(--accent-hover)}.btn-soft{background:var(--surface-2);color:var(--ink);border:1px solid var(--line);box-shadow:none}.drop .btn{background:var(--dark);color:#fff}
-    .input{width:100%;height:46px;background:var(--surface-2);border:1px solid var(--line);border-radius:16px;padding:0 15px;outline:none;color:var(--ink);font:inherit}.input:focus{border-color:#bbb0ea;box-shadow:0 0 0 5px rgba(111,99,217,.09)}
-    .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}.grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.card,.metric{background:var(--surface-2);border:1px solid var(--line);border-radius:24px;padding:18px}.metric-label{text-transform:uppercase;letter-spacing:.07em;font-size:11px;font-weight:950;color:var(--muted)}.metric-value{margin-top:8px;font-size:32px;font-weight:950;letter-spacing:-.06em}
-    .table-wrap{overflow:auto;background:var(--surface-2);border:1px solid var(--line);border-radius:24px}.table{width:100%;border-collapse:collapse;font-size:13px}.table th{text-align:left;color:var(--muted);font-size:12px;font-weight:950;padding:15px 17px;border-bottom:1px solid var(--line);background:#faf3e8;white-space:nowrap}.table td{padding:15px 17px;border-bottom:1px solid #eee2d1;vertical-align:top}.table tr:last-child td{border-bottom:0}
-    .badge{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:950;border:1px solid var(--line);background:#fff;color:#5f554a}.ok{background:var(--green-bg);color:var(--green);border-color:#bde7cc}.warn{background:var(--amber-bg);color:var(--amber);border-color:#efd58d}.bad{background:var(--red-bg);color:var(--red);border-color:#efc2bf}.muted{color:var(--muted)}
-    .split{display:grid;grid-template-columns:330px 1fr;gap:18px}.partner-list{display:flex;flex-direction:column;gap:8px}.partner-btn{width:100%;text-align:left;background:var(--surface-2);border:1px solid var(--line);border-radius:18px;padding:14px 15px;cursor:pointer}.partner-btn:hover{border-color:var(--line-strong)}.partner-btn.active{background:#fff;border-color:#bbb0ea;box-shadow:0 12px 28px rgba(111,99,217,.09)}.mini{font-size:12px;color:var(--muted);font-weight:750;margin-top:3px}
-    .review-tools{display:grid;grid-template-columns:1fr 180px 140px;gap:12px;margin-bottom:14px}.search-row{display:grid;grid-template-columns:1fr auto;gap:12px}.section-gap{height:16px}
-    @media(max-width:920px){.app{padding:14px}.side{height:auto;align-items:flex-start;flex-direction:column;border-radius:22px}.nav{justify-content:flex-start;flex-wrap:wrap}.main{padding-top:28px}.topline{flex-direction:column}.page-title{font-size:46px}.grid-2,.grid-3,.split,.review-tools,.search-row{grid-template-columns:1fr}.side-foot{display:none}}
+    body{margin:0;font-family:'Geist',Inter,system-ui,sans-serif;background:var(--background);color:var(--on-background);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+    ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track{background:var(--background)}::-webkit-scrollbar-thumb{background:var(--surface-highest);border-radius:4px}::-webkit-scrollbar-thumb:hover{background:#cac6be}
+    .app{min-height:100vh;display:flex}.sidebar{position:fixed;left:0;top:0;height:100vh;width:280px;background:var(--surface-low);border-right:1px solid var(--outline-variant);padding:16px;display:flex;flex-direction:column;z-index:40}.brand{padding:8px 8px 32px}.brand-title{font-size:24px;line-height:32px;font-weight:700;letter-spacing:-.01em;color:var(--on-surface)}.brand-sub{font-size:12px;line-height:16px;letter-spacing:.04em;text-transform:uppercase;font-weight:500;color:var(--secondary);margin-top:4px}.nav{display:flex;flex-direction:column;gap:8px}.tab{border:0;background:transparent;display:flex;align-items:center;gap:16px;width:100%;padding:9px 16px;border-radius:4px;color:var(--secondary);font-size:14px;line-height:16px;font-weight:600;letter-spacing:.02em;cursor:pointer;transition:.16s}.tab:hover{background:var(--surface-high);color:var(--on-surface)}.tab-active{background:var(--secondary-container);color:var(--on-secondary-container);transform:scale(.99)}.material-symbols-outlined{font-size:22px;line-height:1}.sidebar-foot{margin-top:auto;border-top:1px solid var(--outline-variant);padding:20px 8px 0;color:var(--secondary);font-size:12px;line-height:16px}.main{margin-left:280px;min-height:100vh;width:calc(100% - 280px);display:flex;flex-direction:column;max-width:1440px}.mobile-top{display:none}.header{padding:40px 48px;border-bottom:1px solid #e5e0d8;display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-shrink:0}.page-title{font-size:40px;line-height:48px;font-weight:600;letter-spacing:-.02em;color:var(--on-surface)}.page-note{font-size:18px;line-height:28px;color:var(--secondary);margin-top:4px}.status-pill{display:inline-flex;align-items:center;gap:8px;border:1px solid #e5e0d8;background:var(--surface-lowest);border-radius:4px;padding:8px 12px;font-size:12px;line-height:16px;font-weight:600;color:var(--on-variant)}.status-dot{width:8px;height:8px;border-radius:999px;background:var(--primary-container)}.content{padding:40px 48px;flex:1;overflow:auto}.tab-panel{display:block}.tab-panel[hidden]{display:none!important}.layout-prices{display:grid;grid-template-columns:4fr 8fr;gap:24px}.stack{display:flex;flex-direction:column;gap:24px}.panel{background:var(--surface-lowest);border:1px solid #e5e0d8;border-radius:8px;padding:24px;box-shadow:0 1px 2px rgba(0,0,0,.04)}.panel-interactive{transition:.2s}.panel-interactive:hover{border-color:#cdc6bc}.panel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:16px}.h1{font-size:24px;line-height:32px;font-weight:500;letter-spacing:-.01em;color:var(--on-surface)}.hint{font-size:14px;line-height:20px;color:var(--secondary);margin-top:4px}.chips{display:flex;gap:8px;flex-wrap:wrap}.chip{background:#f4f1ed;border:1px solid #e5e0d8;border-radius:4px;padding:4px 8px;font-size:12px;line-height:16px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--secondary)}.hidden-file{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}.drop{min-height:220px;border:2px dashed var(--outline-variant);border-radius:8px;background:#f4f1ed;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px;cursor:pointer;transition:.2s}.drop:hover{background:var(--surface-low);border-color:var(--primary-container)}.drop-icon{color:var(--outline);font-size:44px;margin-bottom:8px}.drop-title{font-size:14px;line-height:16px;font-weight:600;letter-spacing:.02em;color:var(--on-surface)}.btn{height:40px;border:1px solid transparent;border-radius:4px;padding:0 24px;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:14px;line-height:16px;font-weight:600;letter-spacing:.02em;cursor:pointer;transition:.16s;background:var(--primary-container);color:var(--on-primary)}.btn:hover{opacity:.9}.btn-primary{background:var(--primary-container);color:var(--on-primary)}.btn-soft{background:transparent;color:var(--on-surface);border-color:#e5e0d8}.btn-soft:hover{background:#f4f1ed}.btn-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:24px}.input{height:40px;width:100%;border:1px solid #e5e0d8;border-radius:4px;background:var(--surface-lowest);padding:0 12px;color:var(--on-surface);font:inherit;outline:none}.input:focus{border-color:var(--primary-container);box-shadow:none}.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}.grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.card,.metric{background:var(--surface-lowest);border:1px solid #e5e0d8;border-radius:8px;padding:16px}.metric-label{font-size:12px;line-height:16px;letter-spacing:.04em;text-transform:uppercase;font-weight:500;color:var(--secondary)}.metric-value{font-size:32px;line-height:40px;font-weight:600;letter-spacing:-.02em;margin-top:4px}.table-wrap{overflow:auto;background:var(--surface-lowest);border:1px solid #e5e0d8;border-radius:8px}.table{width:100%;border-collapse:collapse;text-align:left;font-size:14px;line-height:20px}.table th{padding:8px 16px;background:#f4f1ed;border-bottom:1px solid #e5e0d8;color:var(--secondary);font-size:12px;line-height:16px;letter-spacing:.04em;text-transform:uppercase;font-weight:500;white-space:nowrap}.table td{height:56px;padding:12px 16px;border-bottom:1px solid #e5e0d8;color:var(--on-surface);vertical-align:middle}.table tr:last-child td{border-bottom:0}.table tr:hover td{background:#f9f8f6}.badge{display:inline-flex;align-items:center;border-radius:4px;padding:2px 8px;font-size:12px;line-height:16px;font-weight:500;letter-spacing:.04em;text-transform:uppercase}.ok{background:var(--primary-soft);color:var(--primary-container)}.warn{background:var(--warning-soft);color:var(--warning)}.bad{background:var(--error-soft);color:var(--error)}.muted{color:var(--secondary)}.split{display:grid;grid-template-columns:33% 1fr;min-height:calc(100vh - 220px);border:1px solid #e5e0d8;border-radius:8px;overflow:hidden;background:var(--surface-lowest)}.partners-left{border-right:1px solid #e5e0d8;background:var(--surface-bright);overflow:auto}.partners-search{position:sticky;top:0;background:var(--surface-bright);border-bottom:1px solid #e5e0d8;padding:16px;z-index:1}.partner-list{display:flex;flex-direction:column}.partner-btn{width:100%;text-align:left;background:transparent;border:0;border-bottom:1px solid #e5e0d8;border-left:4px solid transparent;padding:16px;cursor:pointer;transition:.16s}.partner-btn:hover{background:var(--surface-low)}.partner-btn.active{background:var(--surface-container);border-left-color:var(--primary-container)}.mini{font-size:14px;line-height:20px;color:var(--secondary);margin-top:4px}.partner-detail{padding:24px;overflow:auto}.review-tools{display:grid;grid-template-columns:1fr 180px 140px;gap:12px;margin-bottom:16px}.search-row{display:grid;grid-template-columns:1fr auto;gap:12px}.section-gap{height:24px}.upload-placeholder{min-height:260px;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--secondary)}pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    @media(max-width:1024px){.layout-prices{grid-template-columns:1fr}.split{grid-template-columns:1fr}.partners-left{border-right:0;border-bottom:1px solid #e5e0d8}.header,.content{padding-left:24px;padding-right:24px}}
+    @media(max-width:768px){.sidebar{display:none}.main{margin-left:0;width:100%}.mobile-top{display:flex;position:sticky;top:0;z-index:50;background:var(--surface);border-bottom:1px solid var(--outline-variant);padding:12px 16px;align-items:center;justify-content:space-between}.mobile-nav{display:flex;overflow:auto;gap:16px;padding:0 16px 8px;background:var(--surface);border-bottom:1px solid var(--outline-variant)}.mobile-nav .tab{width:auto;padding:8px 0;border-radius:0}.mobile-nav .tab-active{background:transparent;color:var(--primary);border-bottom:2px solid var(--primary);transform:none}.header{padding:24px 16px}.content{padding:24px 16px}.page-title{font-size:32px;line-height:40px}.page-note{font-size:16px;line-height:24px}.btn-row,.grid-2,.grid-3,.review-tools,.search-row{grid-template-columns:1fr}.status-pill{display:none}}
   </style>
 </head>
 <body>
   <div class="app">
-    <aside class="side">
-      <div class="brand"><div class="brand-main">PriceParser</div><div class="brand-sub">medical price archives</div></div>
-      <nav class="nav">
-        <button class="tab tab-active" data-tab="upload">Прайсы</button>
-        <button class="tab" data-tab="partners">Партнёры</button>
-        <button class="tab" data-tab="search">Поиск</button>
-        <button class="tab" data-tab="review">Ревью</button>
-        <button class="tab" data-tab="stats">Статистика</button>
-        <button class="tab" data-tab="catalog">Справочник</button>
-      </nav>
-      <div class="side-foot">ZIP/PDF/DOCX/XLS/XLSX</div>
-    </aside>
+    <nav class="sidebar">
+      <div class="brand">
+        <div class="brand-title">Price Parser</div>
+        <div class="brand-sub">Medical Administration</div>
+      </div>
+      <div class="nav">
+        <button class="tab tab-active" data-tab="upload"><span class="material-symbols-outlined" style="font-variation-settings:'FILL' 1;">payments</span><span>Прайсы</span></button>
+        <button class="tab" data-tab="partners"><span class="material-symbols-outlined">group</span><span>Партнёры</span></button>
+        <button class="tab" data-tab="search"><span class="material-symbols-outlined">search</span><span>Поиск</span></button>
+        <button class="tab" data-tab="review"><span class="material-symbols-outlined">rate_review</span><span>Ревью</span></button>
+        <button class="tab" data-tab="stats"><span class="material-symbols-outlined">query_stats</span><span>Статистика</span></button>
+        <button class="tab" data-tab="catalog"><span class="material-symbols-outlined">auto_stories</span><span>Справочник</span></button>
+      </div>
+      <div class="sidebar-foot">ZIP, PDF, DOCX, XLSX, XLS<br/>Справочник загружается автоматически.</div>
+    </nav>
 
     <main class="main">
-      <div class="topline">
-        <div><div id="pageTitle" class="page-title">Прайсы</div><div id="pageNote" class="page-note">Загрузка архивов и контроль обработки.</div></div>
-        <div class="top-status"><span class="status-dot"></span><span>volume /data</span></div>
+      <div class="mobile-top"><strong>Price Parser</strong><span class="material-symbols-outlined">menu</span></div>
+      <div class="mobile-nav md:hidden">
+        <button class="tab tab-active" data-tab="upload">Прайсы</button><button class="tab" data-tab="partners">Партнёры</button><button class="tab" data-tab="search">Поиск</button><button class="tab" data-tab="review">Ревью</button><button class="tab" data-tab="stats">Статистика</button><button class="tab" data-tab="catalog">Справочник</button>
       </div>
 
-      <section id="upload" class="tab-panel">
-        <section class="panel">
-          <div class="panel-head"><div><div class="h1">Загрузка прайсов</div><div class="hint">Клиника и год определяются из имени файла.</div></div><div class="chips"><span class="chip">ZIP</span><span class="chip">PDF</span><span class="chip">DOCX</span><span class="chip">XLS/XLSX</span></div></div>
-          <form id="priceForm">
-            <input id="clinicName" type="hidden" value="Auto"><input id="effectiveDate" type="hidden" value="">
-            <input id="priceFiles" class="hidden-file" type="file" multiple accept=".zip,.pdf,.xlsx,.xls,.csv,.docx,.txt" required>
-            <label for="priceFiles" id="dropZone" class="drop">
-              <div class="drop-title">Перетащите архив прайсов</div>
-              <div id="filePickHint" class="hint">ZIP, PDF, DOCX, XLSX, XLS</div>
-              <div style="margin-top:20px"><span class="btn">Выбрать файлы</span></div>
-            </label>
-            <button class="btn btn-primary" style="width:100%;margin-top:14px">Запустить обработку</button>
-          </form>
-        </section>
-        <section id="uploadResult" class="panel" style="display:none"></section>
-      </section>
+      <header class="header">
+        <div><h1 id="pageTitle" class="page-title">Прайсы</h1><p id="pageNote" class="page-note">Загрузка архивов и контроль обработки.</p></div>
+        <div class="status-pill"><span class="status-dot"></span><span>volume /data</span></div>
+      </header>
 
-      <section id="partners" class="tab-panel" hidden><section class="panel"><div class="panel-head"><div><div class="h1">Партнёры</div><div class="hint">Клиники из загруженных прайсов.</div></div><button id="refreshPartnersBtn" class="btn btn-soft">Обновить</button></div><div class="split"><div><input id="partnerFilter" class="input" placeholder="Найти клинику"><div id="partnersList" class="partner-list" style="margin-top:12px"></div></div><div id="partnerDetails" class="card muted">Выбери клинику слева.</div></div></section></section>
-      <section id="search" class="tab-panel" hidden><section class="panel"><div class="panel-head"><div><div class="h1">Поиск цен</div><div class="hint">Поиск по позициям прайсов.</div></div></div><div class="search-row"><input id="searchInput" class="input" placeholder="Например: УЗИ"><button id="searchBtn" class="btn btn-primary">Искать</button></div><div id="searchResult" style="margin-top:16px"></div></section></section>
-      <section id="review" class="tab-panel" hidden><section class="panel"><div class="panel-head"><div><div class="h1">Ревью</div><div class="hint">Позиции с низкой уверенностью или подозрительной ценой.</div></div><button id="loadReviewBtn" class="btn btn-soft">Обновить</button></div><div class="review-tools"><input id="reviewClinicFilter" class="input" placeholder="Клиника"><input id="reviewMaxConfidence" class="input" type="number" placeholder="Match до %"><label class="card" style="padding:12px 14px"><input id="reviewLowOnly" type="checkbox"> low price</label></div><div class="search-row" style="margin-bottom:12px"><input id="reviewServiceSearch" class="input" placeholder="Услуга справочника"><button id="reviewServiceBtn" class="btn">Найти match</button></div><select id="reviewServiceSelect" class="input" style="margin-bottom:14px"></select><div id="reviewResult"></div></section></section>
-      <section id="stats" class="tab-panel" hidden><section class="panel"><div class="panel-head"><div><div class="h1">Статистика</div><div class="hint">Состояние базы.</div></div><button id="refreshStatsBtn" class="btn btn-soft">Обновить</button></div><div id="kpi" class="grid-3"></div></section></section>
-      <section id="catalog" class="tab-panel" hidden><section class="panel"><div class="panel-head"><div><div class="h1">Справочник</div><div class="hint">Автозагрузка при старте. Ручной импорт — резерв.</div></div><button id="bootstrapBtn" class="btn btn-soft">Проверить</button></div><form id="catalogForm" class="search-row"><input id="catalogFile" class="input" type="file" accept=".xlsx,.csv,.json"><button class="btn">Импортировать</button></form><pre id="catalogResult" style="margin-top:16px;display:none;background:#18130e;color:#fff;border-radius:18px;padding:16px;overflow:auto;font-size:12px"></pre></section></section>
+      <div class="content">
+        <section id="upload" class="tab-panel">
+          <div class="layout-prices">
+            <div class="stack">
+              <section class="panel panel-interactive">
+                <div class="panel-head"><div><h2 class="h1">Импорт данных</h2><p class="hint">Клиника и год берутся из имени файла.</p></div></div>
+                <form id="priceForm">
+                  <input id="clinicName" type="hidden" value="Auto" />
+                  <input id="effectiveDate" type="hidden" value="" />
+                  <input id="priceFiles" class="hidden-file" type="file" multiple accept=".zip,.pdf,.xlsx,.xls,.csv,.docx,.txt" required />
+                  <label for="priceFiles" id="dropZone" class="drop">
+                    <span class="material-symbols-outlined drop-icon">cloud_upload</span>
+                    <div class="drop-title">Перетащи файлы сюда</div>
+                    <div id="filePickHint" class="hint">ZIP, PDF, DOCX, XLSX, XLS</div>
+                  </label>
+                  <div class="btn-row"><span class="btn btn-soft">Выбрать файлы</span><button class="btn btn-primary">Запустить обработку</button></div>
+                </form>
+              </section>
+              <section class="panel panel-interactive"><div class="panel-head"><div><h2 class="h1">Очередь</h2><p class="hint">Текущий job появится после загрузки.</p></div></div><div class="upload-placeholder">Ожидание архива</div></section>
+            </div>
+            <section id="uploadResult" class="panel panel-interactive" style="display:none"></section>
+          </div>
+        </section>
+
+        <section id="partners" class="tab-panel" hidden>
+          <section class="panel">
+            <div class="panel-head"><div><h2 class="h1">Партнёры</h2><p class="hint">Клиники из загруженных прайсов.</p></div><button id="refreshPartnersBtn" class="btn btn-soft">Обновить</button></div>
+            <div class="split"><aside class="partners-left"><div class="partners-search"><input id="partnerFilter" class="input" placeholder="Найти клинику" /></div><div id="partnersList" class="partner-list"></div></aside><section id="partnerDetails" class="partner-detail muted">Выбери клинику слева.</section></div>
+          </section>
+        </section>
+
+        <section id="search" class="tab-panel" hidden>
+          <section class="panel">
+            <div class="panel-head"><div><h2 class="h1">Поиск цен</h2><p class="hint">Поиск по позициям прайсов.</p></div></div>
+            <div class="search-row"><input id="searchInput" class="input" placeholder="Например: УЗИ" /><button id="searchBtn" class="btn btn-primary">Искать</button></div>
+            <div id="searchResult" style="margin-top:24px"></div>
+          </section>
+        </section>
+
+        <section id="review" class="tab-panel" hidden>
+          <section class="panel">
+            <div class="panel-head"><div><h2 class="h1">Ревью</h2><p class="hint">Позиции с низкой уверенностью или подозрительной ценой.</p></div><button id="loadReviewBtn" class="btn btn-soft">Обновить</button></div>
+            <div class="review-tools"><input id="reviewClinicFilter" class="input" placeholder="Клиника" /><input id="reviewMaxConfidence" class="input" type="number" placeholder="Match до %" /><label class="card"><input id="reviewLowOnly" type="checkbox" /> low price</label></div>
+            <div class="search-row" style="margin-bottom:16px"><input id="reviewServiceSearch" class="input" placeholder="Услуга справочника" /><button id="reviewServiceBtn" class="btn">Найти match</button></div>
+            <select id="reviewServiceSelect" class="input" style="margin-bottom:16px"></select>
+            <div id="reviewResult"></div>
+          </section>
+        </section>
+
+        <section id="stats" class="tab-panel" hidden>
+          <section class="panel"><div class="panel-head"><div><h2 class="h1">Статистика</h2><p class="hint">Состояние базы.</p></div><button id="refreshStatsBtn" class="btn btn-soft">Обновить</button></div><div id="kpi" class="grid-3"></div></section>
+        </section>
+
+        <section id="catalog" class="tab-panel" hidden>
+          <section class="panel"><div class="panel-head"><div><h2 class="h1">Справочник</h2><p class="hint">Автозагрузка при старте. Ручной импорт — резерв.</p></div><button id="bootstrapBtn" class="btn btn-soft">Проверить</button></div><form id="catalogForm" class="search-row"><input id="catalogFile" class="input" type="file" accept=".xlsx,.csv,.json" /><button class="btn">Импортировать</button></form><pre id="catalogResult" style="margin-top:16px;display:none;background:#30312f;color:#f2f0ed;border-radius:8px;padding:16px;overflow:auto;font-size:12px"></pre></section>
+        </section>
+      </div>
     </main>
   </div>
   <script src="/frontend/app_v2.js"></script>
