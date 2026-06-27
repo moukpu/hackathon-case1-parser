@@ -2,7 +2,9 @@ import re
 from typing import Any
 
 
-PRICE_RE = re.compile(r"(?<!\d)(\d{3,}(?:[\s\u00a0]\d{3})*(?:[,.]\d{1,2})?)(?!\d)")
+# Prices in PDFs are often rendered as `22 200`, `4 900`, `86 300`.
+# The previous regex treated the last group (`200`, `900`, `300`) as the price.
+PRICE_RE = re.compile(r"(?<!\d)(\d{1,3}(?:[\s\u00a0]\d{3})+(?:[,.]\d{1,2})?|\d{3,}(?:[,.]\d{1,2})?)(?!\d)")
 CODE_PREFIX_RE = re.compile(r"^\s*[A-ZА-Я]{1,6}\s*\d+(?:[.,]\d+)*(?:\s*[A-ZА-Я])?[.)\-\s,;:]+", re.I)
 TRAILING_COUNT_RE = re.compile(r"\s+\d{1,3}\s*$")
 MONTHS_RE = re.compile(r"\b(январ[ья]|феврал[ья]|март[а]?|апрел[ья]|ма[йя]|июн[ья]|июл[ья]|август[а]?|сентябр[ья]|октябр[ья]|ноябр[ья]|декабр[ья])\b", re.I)
@@ -13,6 +15,11 @@ SKIP_WORDS = {
     "скидка", "примечание", "адрес", "телефон", "бин", "страница", "лист",
     "приложение", "договор", "график", "таблица", "утвержден", "утверждено",
     "от", "с", "по", "дата", "год", "января", "февраля", "марта", "апреля",
+}
+
+GENERIC_NAMES = {
+    "прием", "приём", "повторный", "первичный", "операция", "манипуляция",
+    "услуга", "услуги", "консультация", "исследование", "анализ", "перевод",
 }
 
 SERVICE_KEYWORDS = [
@@ -40,16 +47,25 @@ def parse_price_number(value: str) -> float | None:
     return price
 
 
+def price_matches(value: str) -> list[re.Match]:
+    return list(PRICE_RE.finditer(str(value or "").replace("\u00a0", " ")))
+
+
 def has_service_signal(text: str) -> bool:
     n = (text or "").lower()
     return any(k in n for k in SERVICE_KEYWORDS)
+
+
+def is_generic_name(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (text or "").lower()).strip()
+    return normalized in GENERIC_NAMES or len(normalized) < 5
 
 
 def is_probably_header_or_noise(text: str) -> bool:
     normalized = re.sub(r"\s+", " ", (text or "").lower()).strip()
     if len(normalized) < 4:
         return True
-    if normalized in SKIP_WORDS:
+    if normalized in SKIP_WORDS or normalized in GENERIC_NAMES:
         return True
     if "приложение" in normalized or "утвержден" in normalized:
         return True
@@ -69,7 +85,6 @@ def clean_service_name(value: str) -> str:
     text = re.sub(r"\s+", " ", text.replace("\u00a0", " ")).strip(" .,:;|-–—")
     text = CODE_PREFIX_RE.sub("", text).strip()
     text = re.sub(r"^\d+[.)\-\s]+", "", text).strip()
-    # Many source files have a trailing internal catalog/category number after the service name.
     text = TRAILING_COUNT_RE.sub("", text).strip(" .,:;|-–—")
     return text
 
@@ -93,7 +108,7 @@ def row_to_item(cells: list[str]) -> dict[str, Any] | None:
     name_candidates = []
     for cell in cells[:price_idx]:
         clean = clean_service_name(cell)
-        if len(clean) >= 4 and not is_probably_header_or_noise(clean):
+        if len(clean) >= 5 and not is_generic_name(clean) and not is_probably_header_or_noise(clean):
             score = len(clean) + (30 if has_service_signal(clean) else 0)
             name_candidates.append((score, clean))
 
@@ -101,7 +116,7 @@ def row_to_item(cells: list[str]) -> dict[str, Any] | None:
         return None
 
     service_name = sorted(name_candidates, reverse=True)[0][1]
-    if is_probably_header_or_noise(service_name):
+    if is_generic_name(service_name) or is_probably_header_or_noise(service_name):
         return None
 
     return {
@@ -122,17 +137,27 @@ def line_to_item(line: str) -> dict[str, Any] | None:
     if len(line) < 8 or is_probably_header_or_noise(line):
         return None
 
-    price = parse_price_number(line)
-    if price is None:
-        return None
-
-    matches = list(PRICE_RE.finditer(line))
+    matches = price_matches(line)
     if not matches:
         return None
+
+    # If a prose line contains many prices, it is usually a package explanation,
+    # not a clean service row. Table rows with tabs are handled by row_to_item.
+    if len(matches) >= 4:
+        return None
+
     m = matches[-1]
+    raw_price = m.group(1).replace(" ", "").replace("\u00a0", "").replace(",", ".")
+    try:
+        price = float(raw_price)
+    except ValueError:
+        return None
+    if price < 100 or price > 20_000_000:
+        return None
+
     name = clean_service_name(line[:m.start()])
     name = re.sub(r"(?:цена|стоимость)\s*$", "", name, flags=re.I).strip(" .,:;|-–—")
-    if is_probably_header_or_noise(name) or len(name) < 4:
+    if is_generic_name(name) or is_probably_header_or_noise(name) or len(name) < 5:
         return None
 
     return {
@@ -149,11 +174,7 @@ def line_to_item(line: str) -> dict[str, Any] | None:
 
 
 def parse_price_list_locally(raw_text: str, max_items: int = 5000) -> list[dict[str, Any]]:
-    """Fast deterministic parser for tables/text.
-
-    Max is high on purpose: hackathon ZIPs can contain huge price files. UI can
-    paginate/display a subset, but extraction should not silently cut at 500.
-    """
+    """Fast deterministic parser for tables/text."""
     items: list[dict[str, Any]] = []
     seen: set[tuple[str, float]] = set()
 
