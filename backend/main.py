@@ -165,6 +165,43 @@ def to_float(value):
         return None
 
 
+def norm_search(value) -> str:
+    return str(value or "").replace("ё", "е").casefold().strip()
+
+
+def ci_contains(query: str, *values) -> bool:
+    q = norm_search(query)
+    if not q:
+        return True
+    return any(q in norm_search(value) for value in values)
+
+
+def service_matches_query(service: Service, query: str) -> bool:
+    return ci_contains(
+        query,
+        service.service_name,
+        service.category,
+        service.source_code,
+        service.tarificatr_code,
+        " ".join(service.synonyms),
+    )
+
+
+def partner_matches_query(partner: Partner, query: str) -> bool:
+    return ci_contains(query, partner.name, partner.city, partner.address, partner.bin)
+
+
+def price_item_matches_query(item: PriceItem, query: str) -> bool:
+    return ci_contains(
+        query,
+        item.service_name_raw,
+        item.normalized_name,
+        item.service.service_name if item.service else None,
+        item.partner.name if item.partner else None,
+        item.service_code_source,
+    )
+
+
 def item_to_response(item: PriceItem) -> dict:
     service = item.service
     return {
@@ -621,11 +658,12 @@ async def upload_file(
 @app.get("/api/services")
 async def list_services(category: str | None = None, q: str | None = None, db: Session = Depends(get_db)):
     query = db.query(Service).filter(Service.is_active == True)  # noqa: E712
+    services = query.order_by(Service.category, Service.service_name).limit(5000).all()
     if category:
-        query = query.filter(Service.category.ilike(f"%{category}%"))
+        services = [service for service in services if ci_contains(category, service.category)]
     if q:
-        query = query.filter(Service.service_name.ilike(f"%{q}%"))
-    return query.order_by(Service.category, Service.service_name).limit(500).all()
+        services = [service for service in services if service_matches_query(service, q)]
+    return services[:500]
 
 
 @app.get("/api/services/{service_id}/partners")
@@ -637,11 +675,12 @@ async def service_partners(service_id: str, db: Session = Depends(get_db)):
 @app.get("/api/partners")
 async def list_partners(city: str | None = None, is_active: bool | None = None, db: Session = Depends(get_db)):
     query = db.query(Partner)
-    if city:
-        query = query.filter(Partner.city.ilike(f"%{city}%"))
     if is_active is not None:
         query = query.filter(Partner.is_active == is_active)
-    return query.order_by(Partner.name).all()
+    partners = query.order_by(Partner.name).limit(5000).all()
+    if city:
+        partners = [partner for partner in partners if ci_contains(city, partner.city)]
+    return partners
 
 
 @app.get("/api/partners/{partner_id}/services")
@@ -652,12 +691,17 @@ async def partner_services(partner_id: str, db: Session = Depends(get_db)):
 
 @app.get("/api/search")
 async def search(q: str, db: Session = Depends(get_db)):
-    if not q.strip():
+    q = q.strip()
+    if not q:
         return {"services": [], "partners": [], "prices": []}
-    pattern = f"%{q.strip()}%"
-    services = db.query(Service).filter(Service.service_name.ilike(pattern)).limit(50).all()
-    partners = db.query(Partner).filter(Partner.name.ilike(pattern)).limit(50).all()
-    prices = db.query(PriceItem).filter(or_(PriceItem.service_name_raw.ilike(pattern), PriceItem.normalized_name.ilike(pattern))).limit(100).all()
+
+    services_all = db.query(Service).filter(Service.is_active == True).order_by(Service.category, Service.service_name).limit(5000).all()  # noqa: E712
+    partners_all = db.query(Partner).order_by(Partner.name).limit(5000).all()
+    prices_all = db.query(PriceItem).filter(PriceItem.is_active == True).order_by(PriceItem.created_at.desc()).limit(15000).all()  # noqa: E712
+
+    services = [service for service in services_all if service_matches_query(service, q)][:50]
+    partners = [partner for partner in partners_all if partner_matches_query(partner, q)][:50]
+    prices = [item for item in prices_all if price_item_matches_query(item, q)][:100]
     return {"services": services, "partners": partners, "prices": [item_to_response(item) for item in prices]}
 
 
