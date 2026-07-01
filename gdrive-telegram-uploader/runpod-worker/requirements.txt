@@ -1,0 +1,6 @@
+runpod==1.7.7
+telethon==1.36.0
+google-api-python-client==2.137.0
+google-auth==2.33.0
+google-auth-oauthlib==1.2.1
+python-dotenv==1.0.1

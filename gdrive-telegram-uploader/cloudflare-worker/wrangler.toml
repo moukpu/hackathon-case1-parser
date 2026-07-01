@@ -1,0 +1,12 @@
+name = "gdrive-telegram-uploader"
+main = "src/index.js"
+compatibility_date = "2024-07-01"
+
+# Add secrets with:
+# npx wrangler secret put ADMIN_PASSWORD
+# npx wrangler secret put RUNPOD_API_KEY
+# npx wrangler secret put RUNPOD_ENDPOINT_ID
+# npx wrangler secret put GOOGLE_CLIENT_ID
+# npx wrangler secret put GOOGLE_CLIENT_SECRET
+# npx wrangler secret put GOOGLE_REFRESH_TOKEN
+# npx wrangler secret put GOOGLE_DRIVE_FOLDER_ID
