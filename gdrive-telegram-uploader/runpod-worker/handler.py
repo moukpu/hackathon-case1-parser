@@ -3,7 +3,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import runpod
 from google.auth.transport.requests import Request
@@ -11,25 +11,28 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from telethon import TelegramClient
+from telethon.errors import SessionPasswordNeededError
 from telethon.sessions import StringSession
 
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 
 
-def env(name: str, default: str | None = None, required: bool = True) -> str:
-    value = os.getenv(name, default)
+def pick(auth: Dict[str, Any], name: str, default: Optional[str] = None, required: bool = True) -> str:
+    value = auth.get(name)
+    if value is None or value == "":
+        value = os.getenv(name, default)
     if required and not value:
-        raise RuntimeError(f"Missing env var: {name}")
-    return value or ""
+        raise RuntimeError(f"Missing setting: {name}")
+    return str(value or "")
 
 
-def drive_service():
+def drive_service(auth: Dict[str, Any]):
     creds = Credentials(
         token=None,
-        refresh_token=env("GOOGLE_REFRESH_TOKEN"),
+        refresh_token=pick(auth, "GOOGLE_REFRESH_TOKEN"),
         token_uri="https://oauth2.googleapis.com/token",
-        client_id=env("GOOGLE_CLIENT_ID"),
-        client_secret=env("GOOGLE_CLIENT_SECRET"),
+        client_id=pick(auth, "GOOGLE_CLIENT_ID"),
+        client_secret=pick(auth, "GOOGLE_CLIENT_SECRET"),
         scopes=[DRIVE_SCOPE],
     )
     creds.refresh(Request())
@@ -75,13 +78,52 @@ def download_file(service, meta: Dict[str, Any], tmp_dir: str) -> str:
     return local_path
 
 
-async def send_to_telegram(message: str, local_files: List[str]) -> List[Dict[str, Any]]:
+async def telegram_send_code(auth: Dict[str, Any], phone: str) -> Dict[str, Any]:
+    async with TelegramClient(
+        StringSession(),
+        int(pick(auth, "TELEGRAM_API_ID")),
+        pick(auth, "TELEGRAM_API_HASH"),
+    ) as client:
+        sent = await client.send_code_request(phone)
+        return {"ok": True, "phone_code_hash": sent.phone_code_hash}
+
+
+async def telegram_verify_code(auth: Dict[str, Any], phone: str, code: str, phone_code_hash: str, password: str = "") -> Dict[str, Any]:
+    async with TelegramClient(
+        StringSession(),
+        int(pick(auth, "TELEGRAM_API_ID")),
+        pick(auth, "TELEGRAM_API_HASH"),
+    ) as client:
+        try:
+            await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
+        except SessionPasswordNeededError:
+            if not password:
+                return {"ok": False, "needs_password": True, "error": "2FA password required"}
+            await client.sign_in(password=password)
+        me = await client.get_me()
+        return {"ok": True, "session": client.session.save(), "user": getattr(me, "username", None) or getattr(me, "first_name", "Telegram")}
+
+
+async def telegram_list_chats(auth: Dict[str, Any]) -> Dict[str, Any]:
+    async with TelegramClient(
+        StringSession(pick(auth, "TELEGRAM_SESSION_STRING")),
+        int(pick(auth, "TELEGRAM_API_ID")),
+        pick(auth, "TELEGRAM_API_HASH"),
+    ) as client:
+        chats = []
+        async for dialog in client.iter_dialogs():
+            raw_id = getattr(dialog.entity, "id", None)
+            chats.append({"name": dialog.name, "raw_id": raw_id, "channel_id_hint": f"-100{raw_id}" if raw_id else ""})
+        return {"ok": True, "chats": chats[:200]}
+
+
+async def send_to_telegram(auth: Dict[str, Any], message: str, local_files: List[str]) -> List[Dict[str, Any]]:
     client = TelegramClient(
-        StringSession(env("TELEGRAM_SESSION_STRING")),
-        int(env("TELEGRAM_API_ID")),
-        env("TELEGRAM_API_HASH"),
+        StringSession(pick(auth, "TELEGRAM_SESSION_STRING")),
+        int(pick(auth, "TELEGRAM_API_ID")),
+        pick(auth, "TELEGRAM_API_HASH"),
     )
-    channel = env("TELEGRAM_CHANNEL")
+    channel = pick(auth, "TELEGRAM_CHANNEL")
     out: List[Dict[str, Any]] = []
     async with client:
         target = await client.get_entity(channel)
@@ -94,17 +136,17 @@ async def send_to_telegram(message: str, local_files: List[str]) -> List[Dict[st
     return out
 
 
-def handler(event: Dict[str, Any]) -> Dict[str, Any]:
+def upload_files(inp: Dict[str, Any]) -> Dict[str, Any]:
     started = time.time()
-    inp = event.get("input") or {}
+    auth = inp.get("auth") or {}
     message = str(inp.get("message") or "")
     files = inp.get("files") or []
     if not isinstance(files, list) or not files:
         return {"ok": False, "error": "No files selected"}
 
-    max_file_bytes = int(env("MAX_FILE_BYTES", str(4 * 1024 * 1024 * 1024), required=False))
-    tmp_dir = env("TMP_DIR", "/tmp/gdrive-tg", required=False)
-    service = drive_service()
+    max_file_bytes = int(pick(auth, "MAX_FILE_BYTES", str(4 * 1024 * 1024 * 1024), required=False))
+    tmp_dir = pick(auth, "TMP_DIR", "/tmp/gdrive-tg", required=False)
+    service = drive_service(auth)
     downloaded: List[str] = []
     results: List[Dict[str, Any]] = []
 
@@ -123,7 +165,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         if not downloaded:
             return {"ok": False, "results": results, "error": "No files downloaded"}
 
-        tg_results = asyncio.run(send_to_telegram(message, downloaded))
+        tg_results = asyncio.run(send_to_telegram(auth, message, downloaded))
         return {"ok": True, "seconds": round(time.time() - started, 2), "download_results": results, "telegram_results": tg_results}
     except Exception as exc:
         return {"ok": False, "error": repr(exc), "results": results}
@@ -133,6 +175,30 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
                 os.remove(path)
             except Exception:
                 pass
+
+
+def handler(event: Dict[str, Any]) -> Dict[str, Any]:
+    inp = event.get("input") or {}
+    op = inp.get("op") or "upload"
+    auth = inp.get("auth") or {}
+    try:
+        if op == "telegram_send_code":
+            return asyncio.run(telegram_send_code(auth, str(inp.get("phone") or "")))
+        if op == "telegram_verify_code":
+            return asyncio.run(
+                telegram_verify_code(
+                    auth,
+                    str(inp.get("phone") or ""),
+                    str(inp.get("code") or ""),
+                    str(inp.get("phone_code_hash") or ""),
+                    str(inp.get("password") or ""),
+                )
+            )
+        if op == "telegram_list_chats":
+            return asyncio.run(telegram_list_chats(auth))
+        return upload_files(inp)
+    except Exception as exc:
+        return {"ok": False, "error": repr(exc), "op": op}
 
 
 runpod.serverless.start({"handler": handler})
