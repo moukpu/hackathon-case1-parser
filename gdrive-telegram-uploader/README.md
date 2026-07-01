@@ -63,12 +63,13 @@ GOOGLE_DRIVE_FOLDER_ID=
 
 ## Telegram private channel
 
-Для приватного канала лучше использовать числовой ID вида `-100...`. Чтобы получить его:
+Для приватного канала лучше использовать числовой ID вида `-100...`. Чтобы получить raw id:
 
 ```bash
-python tools/get_telegram_dialogs.py
+python tools/list_telegram_chats.py
 ```
 
+Если Telegram требует полный channel id, добавь `-100` перед raw id.
 Аккаунт, через который создана `TELEGRAM_SESSION_STRING`, должен быть участником/админом канала.
 
 ## Google Drive folder
